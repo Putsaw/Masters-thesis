@@ -17,31 +17,6 @@ from sklearn.cluster import DBSCAN
 root = tk.Tk()
 root.withdraw()
 
-# Select folder
-# folder_path = filedialog.askdirectory(title='Select folder containing Cine files')
-
-# if not folder_path:
-#     print('Folder selection was canceled.')
-#     exit()
-
-# # start testpoint and ending testpoint
-# startT = 1
-# endT = 1
-
-# for t in range(startT, endT + 1):
-#     t_str = f"T{t}"
-#     file_pattern = os.path.join(folder_path, f"{t_str}_*")
-    
-#     matching_files = glob.glob(file_pattern)
-    
-#     all_files = []
-#     for file in matching_files:
-#         all_files.append(file)
-    
-#     name, ext = os.path.splitext(os.path.basename(all_files[0]))
-#     input_file = [name + ext]  # list with one element
-#     number_of_image_files = len(all_files)
-
 all_files = filedialog.askopenfilenames(title="Select one or more files")
 
 for file in all_files:
@@ -100,7 +75,6 @@ for file in all_files:
     rotation_matrix = cv2.getRotationMatrix2D(center, angle, scale)
     
     firstFrame = video[4]
-    video_strip = []
     bg_subtractor = cv2.createBackgroundSubtractorKNN()
     bg_subtractor.setHistory(30) #set amount of frames to affect the subtraction
     for i in range(nframes):
@@ -199,73 +173,127 @@ for file in all_files:
         #     outline = cnt.reshape(-1, 2).tolist()  # Convert contour points to a list of [x, y]
         #     centers.append(outline)
 
-        # contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # # Get outline points of contours
-        # outlines = []
-        # for cnt in contours:
-        #     outline = cnt.reshape(-1, 2).tolist()
-        #     outlines.append(outline)
+        # Get outline points of contours
+        outlines = []
+        for cnt in contours:
+            outline = cnt.reshape(-1, 2).tolist()
+            outlines.append(outline)
 
-        # # Flatten all outline points into a single list for hull calculation
-        # all_points = [pt for outline in outlines for pt in outline]
+        # Flatten all outline points into a single list for hull calculation
+        all_points = [pt for outline in outlines for pt in outline]
 
-        # # Create a blank canvas (same size as binary)
-        # canvas = np.zeros_like(binary)
+        # Create a blank canvas (same size as binary)
+        canvas = np.zeros_like(binary)
 
-        # # Optimize line drawing using Convex Hull if enough points
-        # if len(all_points) >= 3:
-        #     hull = ConvexHull(all_points)
-        #     hull_points = [all_points[i] for i in hull.vertices]
-        #     for i in range(len(hull_points)):
-        #         pt1 = tuple(hull_points[i])
-        #         pt2 = tuple(hull_points[(i + 1) % len(hull_points)])
-        #         cv2.line(canvas, pt1, pt2, 255, thickness=1)
-        # else:
-        #     # Fallback to pairwise connection for few points
-        #     for i in range(len(all_points)):
-        #         for j in range(i + 1, len(all_points)):
-        #             cv2.line(canvas, tuple(all_points[i]), tuple(all_points[j]), 255, thickness=1)
+        # Optimize line drawing using Convex Hull if enough points
+        if len(all_points) >= 3:
+            hull = ConvexHull(all_points)
+            hull_points = [all_points[i] for i in hull.vertices]
+            for i in range(len(hull_points)):
+                pt1 = tuple(hull_points[i])
+                pt2 = tuple(hull_points[(i + 1) % len(hull_points)])
+                cv2.line(canvas, pt1, pt2, 255, thickness=1)
+        else:
+            # Fallback to pairwise connection for few points
+            for i in range(len(all_points)):
+                for j in range(i + 1, len(all_points)):
+                    cv2.line(canvas, tuple(all_points[i]), tuple(all_points[j]), 255, thickness=1)
 
-        # # Fill the enclosed area
-        # # contours_fill, _ = cv2.findContours(canvas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        # # cv2.drawContours(canvas, contours_fill, -1, 255, thickness=cv2.FILLED)
+        # Fill the enclosed area
+        # contours_fill, _ = cv2.findContours(canvas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # cv2.drawContours(canvas, contours_fill, -1, 255, thickness=cv2.FILLED)
 
-        # # Show result
-        # overlay = cv2.addWeighted(frame, 1, canvas, 1, 0)
+        # Show result
+        overlay = cv2.addWeighted(frame, 1, canvas, 1, 0)
 
-        # cv2.imshow('connected blob', overlay)
-        # if cv2.waitKey(60) & 0xFF == ord('q'):
-        #     break
-
-        #frame = cv2.subtract(video[i], firstFrame)
-
-        rotated_image = cv2.warpAffine(frame, rotation_matrix, (width, height))
-        strip = rotated_image[y_start:y_end, x_start:x_end]
-        video_strip.append(strip)
-
-    for i in range(nframes):
-
-        blurred = cv2.GaussianBlur(video_strip[i], (5, 5), 0)
-        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        cv2.imshow('binary Image', binary)
+        cv2.imshow('connected blob', overlay)
         if cv2.waitKey(60) & 0xFF == ord('q'):
             break
 
+        #frame = cv2.subtract(video[i], firstFrame)
+
+    # Create rotated video strip
+    video_strip = []
+    for i in range(nframes):
+        frame = video[i]
+        rotated_image = cv2.warpAffine(frame, rotation_matrix, (width, height))
+        #strip = rotated_image[y_start:y_end, x_start:x_end]
+        strip = rotated_image
+        video_strip.append(strip)
+
+    # Basic thresholding visualization
+    # for i in range(nframes):
+
+    #     blurred = cv2.GaussianBlur(video_strip[i], (5, 5), 0)
+    #     _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    #     cv2.imshow('binary Image', binary)
+    #     if cv2.waitKey(60) & 0xFF == ord('q'):
+    #         break
+
+    first_frame = video_strip[0]
+    if len(first_frame.shape) == 3:
+        prev_gray = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
+    else:
+        prev_gray = first_frame.copy()
+
+    # Create HSV image for visualization (3 channels)
+    hsv = np.zeros((prev_gray.shape[0], prev_gray.shape[1], 3), dtype=np.uint8)
+    hsv[..., 1] = 255  # full saturation for color visualization
+
+    for i in range(nframes):
+        frame = video_strip[i]
+
+        if len(frame.shape) == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = frame.copy()
+
+        # Compute dense optical flow using Farnebäck method
+        flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, 
+                                            None,
+                                            0.5,  # pyramid scale
+                                            3,    # levels
+                                            15,   # window size
+                                            3,    # iterations
+                                            5,    # poly_n
+                                            1.2,  # poly_sigma
+                                            0)    # flags
+
+        # Convert flow to polar coordinates (magnitude and angle)
+        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+
+        # Use hue to encode direction and value to encode magnitude
+        hsv[..., 0] = ang * 180 / np.pi / 2
+        hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+
+        motion_intensity = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+        motion_intensity = np.uint8(motion_intensity)
+
+        rgb_flow = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+        # Display
+        cv2.imshow('Original', frame)
+        cv2.imshow('Optical Flow', rgb_flow)
+        cv2.imshow('Optical Flow (Motion Intensity)', motion_intensity)
+
+        if cv2.waitKey(60) & 0xFF == ord('q'):
+            break
+
+        # Set previous frame to current
+        prev_gray = gray
+
+
+        # blurred = cv2.GaussianBlur(motion_intensity, (5, 5), 0)
+        # _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # cv2.imshow('binary Image', binary)
+        # if cv2.waitKey(60) & 0xFF == ord('q'):
+        #     break
+
     cv2.destroyAllWindows()
-
-
-
-# # Generate synthetic binary signal data (scattered points)
-# np.random.seed(42)
-# cluster1 = np.random.normal(loc=[30, 30], scale=5, size=(50, 2))
-# cluster2 = np.random.normal(loc=[70, 70], scale=5, size=(50, 2))
-# noise = np.random.uniform(low=0, high=100, size=(20, 2))
-# data = np.vstack([cluster1, cluster2, noise])
-
-
-
 
                                     
             
