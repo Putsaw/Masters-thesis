@@ -66,8 +66,11 @@ def alpha_shape(points, alpha):
     return np.array(outline).astype(int)
 
 
-def cluster_signals(mask, frame, cluster_distance=30, alpha=30):
-
+def create_cluster_mask(mask, cluster_distance=30, alpha=30):
+    """
+    Create a filled mask from clustered contours.
+    Returns a binary mask with filled clusters.
+    """
     # Get contour points from mask
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -77,7 +80,7 @@ def cluster_signals(mask, frame, cluster_distance=30, alpha=30):
             points.append(p[0])  # (x, y)
 
     if len(points) == 0:
-        return frame
+        return np.zeros_like(mask)
 
     pts = np.array(points)
 
@@ -87,7 +90,7 @@ def cluster_signals(mask, frame, cluster_distance=30, alpha=30):
 
     canvas = np.zeros_like(mask)
 
-    # For each cluster, compute concave hull
+    # For each cluster, compute concave hull and fill
     for label in set(labels):
         if label == -1:  # noise
             continue
@@ -96,13 +99,26 @@ def cluster_signals(mask, frame, cluster_distance=30, alpha=30):
 
         if len(cluster_pts) >= 3:
             hull_pts = alpha_shape(cluster_pts, alpha)
+            cv2.fillPoly(canvas, [hull_pts], 255)
 
-            # Draw outline only
-            cv2.polylines(canvas, [hull_pts], isClosed=True, color=255, thickness=2)
+    return canvas
 
+
+def overlay_cluster_outline(frame, cluster_mask):
+    """
+    Take a filled cluster mask and overlay its outline on the frame.
+    Returns the frame with cluster outlines drawn.
+    """
+    # Get contours from the filled mask
+    contours, _ = cv2.findContours(cluster_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    canvas = np.zeros_like(cluster_mask)
+    
+    # Draw outlines only
+    for cnt in contours:
+        cv2.polylines(canvas, [cnt], isClosed=True, color=255, thickness=2)
+    
     overlay = cv2.addWeighted(frame, 1.0, canvas, 1.0, 0)
-
-    # add: keep only largest cluster outline
-
+    
     return overlay
 

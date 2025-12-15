@@ -57,14 +57,13 @@ for file in all_files:
     ##############################
     # Video Rotation and Stripping
     ##############################
-    rotated_video = vpf.createRotatedVideo(video, 45)
+    rotated_video = vpf.createRotatedVideo(video, 60)
     video_strip = vpf.createVideoStrip(rotated_video)
 
     ##############################
     # Background Removal Visualization
     ##############################
-    # firstFrameNumber = vpf.findFirstFrame(video_strip)
-    firstFrameNumber = vpf.plot_mean_intensity(video_strip)
+    firstFrameNumber = vpf.findFirstFrame(video_strip)
 
     first_frame = video_strip[firstFrameNumber]
     for i in range(nframes):
@@ -76,18 +75,58 @@ for file in all_files:
             break
     cv2.destroyAllWindows()
 
-    """
-    vpf.removeBackgroundThreshold(video_strip, threshold=30)
-    for i in range(nframes):
-        cv2.imshow('Original vid', video_strip[i])
-        if cv2.waitKey(60) & 0xFF == ord('q'):
-            break
-    cv2.destroyAllWindows()
-    """
 
-    # ##############################
-    # # DeepFlow Optical Flow Visualization
-    # ##############################
+    ##############################
+    # Filter Visualization
+    ###############################
+    # vpf.applyCLAHE(video_strip)
+
+    # for i in range(nframes):
+    #     frame = video_strip[i]
+    #     cv2.imshow('CLAHE filter', frame)
+    #     key = cv2.waitKey(40) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows() 
+
+    # vpf.applyLaplacianFilter(video_strip)
+    # for i in range(nframes):
+    #     frame = video_strip[i]
+    #     cv2.imshow('Laplacian filter', frame)
+    #     key = cv2.waitKey(40) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows() 
+
+    # vpf.applyDoGfilter(video_strip)
+    # for i in range(nframes):
+    #     frame = video_strip[i]
+    #     cv2.imshow('DoG filter', frame)
+    #     key = cv2.waitKey(40) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows()
+
+    # vpf.adaptiveGaussianThreshold(video_strip)
+    # for i in range(nframes):
+    #     frame = video_strip[i]
+    #     cv2.imshow('Adaptive Gaussian Threshold', frame)
+    #     key = cv2.waitKey(40) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows()
+
+    ##############################
+    # Optical Flow Visualization
+    ##############################
     intensity_values = []       # store average intensities
     first_frame = video_strip[firstFrameNumber]
     prev_frame = first_frame
@@ -108,12 +147,12 @@ for file in all_files:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
 
         # Use clustering to get signal outlines
-        clustered_overlay = cluster_signals(mask, frame, cluster_distance=50, alpha=40)
+        cluster_mask = create_cluster_mask(mask, cluster_distance=50, alpha=40)
+        clustered_overlay = overlay_cluster_outline(frame, cluster_mask)
 
         # Compute mean intensity inside the mask
-        # filled_mask = fill_largest_cluster(clustered_overlay, frame)
-        # mean_intensity = cv2.mean(frame, filled_mask)
-        # intensity_values.append(mean_intensity)
+        mean_intensity = cv2.mean(frame, cluster_mask)
+        intensity_values.append(mean_intensity)
 
         # Display results
         # cv2.imshow('filled mask', filled_mask)
@@ -134,14 +173,42 @@ for file in all_files:
 
     cv2.destroyAllWindows()
 
-    # # --- Create shifted x-axis ---
-    # frame_numbers = np.arange(firstFrameNumber, firstFrameNumber + len(intensity_values))
+    # --- Analyze intensity values ---
+    # Needs more work, maybe diffent method to find significant changes
 
-    # plt.plot(frame_numbers, intensity_values)
-    # plt.xlabel("Frame Number")
-    # plt.ylabel("Mean Intensity Inside Region")
-    # plt.title("Intensity Over Time (Shifted)")
-    # plt.show()
+    # calculate derivative of intensity values
+    intensity_values = np.array(intensity_values)   [:,0]  # Extract first channel if mean returns a tuple
+    
+    # Apply rolling mean with window size 5
+    window_size = 5
+    intensity_smoothed = np.convolve(intensity_values, np.ones(window_size)/window_size, mode='valid')
+    
+    # Compute derivative on smoothed data
+    intensity_derivative = np.diff(intensity_smoothed, prepend=intensity_smoothed[0])
+
+    # --- Create shifted x-axis ---
+    # Adjust frame_numbers to match the length after rolling mean
+    frame_numbers = np.arange(firstFrameNumber, firstFrameNumber + len(intensity_derivative))
+
+    # only consider frames at least 10 after firstFrameNumber
+    start_offset = 10
+    if len(intensity_derivative) <= start_offset:
+        # not enough frames — fall back to full range
+        min_idx = int(np.argmin(intensity_derivative))
+    else:
+        sliced = intensity_derivative[start_offset:]
+        rel_min = int(np.argmin(sliced))
+        min_idx = rel_min + start_offset
+
+    min_frame = int(frame_numbers[min_idx])
+    min_value = float(intensity_derivative[min_idx])
+    print(f"Lowest intensity derivative at frame {min_frame} (index {min_idx}) = {min_value:.6f}")
+
+    plt.plot(frame_numbers, intensity_derivative)
+    plt.xlabel("Frame Number")
+    plt.ylabel("Mean Intensity Inside Region")
+    plt.title("Intensity Over Time (Shifted)")
+    plt.show()
 
 
 

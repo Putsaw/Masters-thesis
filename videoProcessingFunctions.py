@@ -1,3 +1,6 @@
+################################
+# Removes background from a frame using the first frame as reference
+################################
 def removeBackground(frame, first_frame):
     import cv2
     import numpy as np
@@ -21,6 +24,9 @@ def removeBackground(frame, first_frame):
 
     return foreground
 
+################################
+# Rotates each frame in the video by a specified angle
+################################
 def createRotatedVideo(video, angle):
     import cv2
     import numpy as np
@@ -36,6 +42,9 @@ def createRotatedVideo(video, angle):
 
     return rotated_video
 
+################################
+# Creates a video strip by extracting the central strip of each frame
+################################
 def createVideoStrip(video, strip_height = None):
     # Come back later, spray height needs to be known beforehand
     import numpy as np
@@ -53,6 +62,9 @@ def createVideoStrip(video, strip_height = None):
 
     return video_strip
 
+###############################
+# Takes a video and returns the first frame with mean intensity above a threshold
+################################
 def findFirstFrame(video, threshold=10):
     import numpy as np
     nframes = video.shape[0]
@@ -67,31 +79,9 @@ def findFirstFrame(video, threshold=10):
         
     return 0  # Default to first frame if no suitable frame is found
 
-def plot_mean_intensity(video, threshold=10):
-    import numpy as np
-    import matplotlib.pyplot as plt
-    nframes = video.shape[0]
-    mean_values = []
-
-    for i in range(nframes):
-        frame = video[i]
-        mean_intensity = frame.mean()
-        mean_values.append(mean_intensity)
-
-    # Plot the graph
-    plt.plot(mean_values)
-    plt.xlabel("Frame number")
-    plt.ylabel("Mean intensity")
-    plt.title("Mean Frame Intensity Over Time")
-    plt.show()
-
-    # (Optional) Return the first frame above threshold
-    for i, m in enumerate(mean_values):
-        if m > threshold:
-            return i
-
-    return 0
-
+################################
+# Applies a binary threshold to each frame in the video, UNUSED
+################################
 def removeBackgroundThreshold(video, threshold=30):
     #Consider making frame specific
     import cv2
@@ -101,6 +91,67 @@ def removeBackgroundThreshold(video, threshold=30):
     for i in range(nframes):
         frame = video[i]
         _, frame = cv2.threshold(frame, threshold, 255, cv2.THRESH_BINARY)
+        video[i] = frame
+
+    return video
+
+################################
+# Applies CLAHE (Contrast Limited Adaptive Histogram Equalization) to each frame in the video
+################################
+def applyCLAHE(video, clipLimit=2.0, tileGridSize=(8,8)):
+    import cv2
+    import numpy as np
+
+    nframes = video.shape[0]
+    clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=tileGridSize)
+
+    for i in range(nframes):
+        frame = video[i]
+        frame = clahe.apply(frame)
+        video[i] = frame
+
+    return video
+
+def applyLaplacianFilter(video):
+    import cv2
+    import numpy as np
+
+    nframes = video.shape[0]
+
+    for i in range(nframes):
+        frame = video[i]
+        frame = cv2.Laplacian(frame, cv2.CV_64F)
+        frame = cv2.convertScaleAbs(frame)
+        video[i] = frame
+
+    return video
+
+def applyDoGfilter(video, ksize1=5, ksize2=9):
+    import cv2
+    import numpy as np
+
+    nframes = video.shape[0]
+
+    for i in range(nframes):
+        frame = video[i]
+        blur1 = cv2.GaussianBlur(frame, (ksize1, ksize1), 0)
+        blur2 = cv2.GaussianBlur(frame, (ksize2, ksize2), 0)
+        dog = cv2.subtract(blur1, blur2)
+        dog = cv2.convertScaleAbs(dog)
+        video[i] = dog
+
+    return video
+
+def adaptiveGaussianThreshold(video, maxValue=255, blockSize=11, C=2):
+    import cv2
+    import numpy as np
+
+    nframes = video.shape[0]
+
+    for i in range(nframes):
+        frame = video[i]
+        frame = cv2.adaptiveThreshold(frame, maxValue, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                      cv2.THRESH_BINARY, blockSize, C)
         video[i] = frame
 
     return video
