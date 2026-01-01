@@ -4,9 +4,8 @@ import tkinter as tk
 from tkinter import filedialog
 import cv2
 from clustering import *
-from functions import *
-import videoProcessingFunctions as vpf
-import opticalFlow as of
+from videoProcessingFunctions import *
+from opticalFlow import *
 
 
 root = tk.Tk()
@@ -48,11 +47,11 @@ for file in all_files:
     ##############################
     # Video Rotation and Stripping
     ##############################
-    rotated_video = vpf.createRotatedVideo(video, 60)
-    video_strip = vpf.createVideoStrip(rotated_video)
+    rotated_video = createRotatedVideo(video, 60)
+    video_strip = createVideoStrip(rotated_video)
 
     # Find first real frame in video
-    firstFrameNumber = vpf.findFirstFrame(video_strip)
+    firstFrameNumber = findFirstFrame(video_strip)
 
    ##############################
     # Optical Flow Visualization
@@ -64,7 +63,7 @@ for file in all_files:
         frame = video_strip[i]
 
         # --- Compute DeepFlow optical flow ---
-        flow = of.opticalFlowFarnebackCalculation(prev_frame, frame) # Farneback 0.3 threshold
+        flow = opticalFlowFarnebackCalculation(prev_frame, frame) # Farneback 0.3 threshold
 
         # Compute magnitude (motion strength) and angle (not needed here)
         mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
@@ -76,6 +75,8 @@ for file in all_files:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
 
         # Use clustering to get signal outlines
+        # cluster_distance affects distance threshold for clustering points
+        # alpha affects distance for concave hull generation
         cluster_mask = create_cluster_mask(mask, cluster_distance=50, alpha=40)
         # USE CLUSTER_MASK TO FOR DATA EXTRACTION LATER
 
