@@ -1,4 +1,5 @@
 from clustering import *
+from extrapolation import SprayConeBackfill
 from functions import *
 from functions_videos import *
 from functions_optical_flow import *
@@ -9,8 +10,6 @@ import videoProcessingFunctions as vpf
 from std_functions3 import *
 import tkinter as tk
 from tkinter import filedialog
-
-from skimage.segmentation import chan_vese
 
 # Pipeline:
     # Compute optical flow between frames
@@ -25,20 +24,24 @@ from skimage.segmentation import chan_vese
 
 # TODO:
     # combine optical flow with otsu thresholding for better results
+    # improve clustering method to avoid holes in masks
+    # optimize performance for larger videos (multiprocessing?)
+    # improve GUI for mask drawing and parameter tuning
+    # add option to save/load masks
+    # add some interpolation algorithm to fill gaps in masks over time
+    # add some extrapolation algorithm to extend masks before/after detected motion
 
 # Hide the main tkinter window
 root = tk.Tk()
 root.withdraw()
 
 ################################
-# Main function
+# Load Video Files
 ###############################
 all_files = filedialog.askopenfilenames(title="Select one or more files")
 for file in all_files:
     print("Processing:", file)
     video = load_cine_video(file)  # Ensure load_cine_video is defined or imported
-
-    # play_video_cv2(video)
 
     nframes, height, width = video.shape[:3]
     dtype = video[0].dtype
@@ -69,15 +72,11 @@ for file in all_files:
     rotated_video = vpf.createRotatedVideo(video, 60)
     video_strip = vpf.createVideoStrip(rotated_video)
 
-    ##############################
-    # Background Removal Visualization
-    ##############################
     firstFrameNumber = vpf.findFirstFrame(video_strip)
-
     first_frame = video_strip[firstFrameNumber]
 
     ######################################
-    # Simple background Removal Visualization
+    # Simple background Removal Visualization **UNUSED**
     ######################################
     # for i in range(nframes):
     #     frame = video_strip[i]
@@ -87,7 +86,6 @@ for file in all_files:
     #     if cv2.waitKey(60) & 0xFF == ord('q'):
     #         break
     # cv2.destroyAllWindows()
-
 
     drawing = False
     points = []
@@ -146,15 +144,15 @@ for file in all_files:
     # Filter Visualization
     ###############################
     vpf.applyCLAHE(video_strip)
-    for i in range(nframes):
-        frame = video_strip[i]
-        cv2.imshow('CLAHE filter', frame)
-        key = cv2.waitKey(40) & 0xFF
-        if key == ord('q'):
-            break
-        if key == ord('p'):
-            cv2.waitKey(-1)
-    cv2.destroyAllWindows() 
+    # for i in range(nframes):
+    #     frame = video_strip[i]
+    #     cv2.imshow('CLAHE filter', frame)
+    #     key = cv2.waitKey(40) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows() 
 
     # vpf.removeBackgroundSimple(video_strip, first_frame, threshold=10)
     # for i in range(nframes):
@@ -169,16 +167,15 @@ for file in all_files:
 
     background_mask = vpf.createBackgroundMask(first_frame, threshold=10) # Chamber walls have an intensity of about 3
     otsu_video = vpf.OtsuThreshold(video_strip, background_mask)
-    # vpf.invertVideo(video_strip)
-    for i in range(nframes):
-        frame = otsu_video[i]
-        cv2.imshow('Otsu Threshold', frame)
-        key = cv2.waitKey(40) & 0xFF
-        if key == ord('q'):
-            break
-        if key == ord('p'):
-            cv2.waitKey(-1)
-    cv2.destroyAllWindows()
+    # for i in range(nframes):
+    #     frame = otsu_video[i]
+    #     cv2.imshow('Otsu Threshold', frame)
+    #     key = cv2.waitKey(40) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows()
 
     # vpf.applyLaplacianFilter(video_strip)
     # for i in range(nframes):
@@ -252,38 +249,13 @@ for file in all_files:
     ##############################
     # Optical Flow Visualization
     ##############################
-    # TODO: rewrite as a function
-    intensity_values = []       # store average intensities
-    first_frame = video_strip[firstFrameNumber]
-    prev_frame = first_frame
-
-    cluster_masks = np.zeros((nframes, height, width), dtype=np.uint8)
-
+    cluster_masks, clustered_overlays, masks = of.runOpticalFlowCalculation(firstFrameNumber, video_strip, method='Farneback')
     for i in range(firstFrameNumber, nframes):
+        
         frame = video_strip[i]
+        clustered_overlay = clustered_overlays[i]
+        mask = masks[i]
 
-        # --- Compute DeepFlow optical flow ---
-        flow = of.opticalFlowFarnebackCalculation(prev_frame, frame) # Farneback 0.3 threshold
-
-        # Compute magnitude (motion strength) and angle (not needed here)
-        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-
-        # threshold movement
-        mask = (mag > 0.4).astype(np.uint8) * 255
-
-        # clean up
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
-
-        # Use clustering to get signal outlines
-        cluster_mask = create_cluster_mask(mask, cluster_distance=50, alpha=40)
-        clustered_overlay = overlay_cluster_outline(frame, cluster_mask)
-
-        # Compute mean intensity inside the mask
-        mean_intensity = cv2.mean(frame, cluster_mask)
-        intensity_values.append(mean_intensity)
-
-        # Display results
-        # cv2.imshow('filled mask', filled_mask)
         cv2.imshow('Clustered Overlay', clustered_overlay)
         cv2.imshow("mask", mask)
         cv2.imshow('Original', frame)
@@ -295,19 +267,10 @@ for file in all_files:
         if key == ord('p'):
             cv2.waitKey(-1)
 
-        prev_frame = frame
-
-        cluster_masks[i] = cluster_mask
-
-        print(f"Processed frame {i+1}/{nframes}")
-
     cv2.destroyAllWindows()
 
     # GOAL: if both otsu and cluster masks agree, keep the region
     # try to remake with non binary masks?
-
-    
-
 
     # --- Combine Otsu masks and cluster masks with adjustable weights ---
     # Change these weights to tune contribution from each method
@@ -342,7 +305,6 @@ for file in all_files:
             otsu_mask = np.ones_like(otsu_mask, dtype=np.float32)
         if np.count_nonzero(freehand) == 0:
             freehand = np.ones_like(freehand, dtype=np.float32)
-        # Uncomment for shadowgraph 
         # if np.count_nonzero(cluster_mask) == 0:  
         #     cluster_mask = np.ones_like(cluster_mask, dtype=np.float32)
 
@@ -366,18 +328,21 @@ for file in all_files:
 
         # combined_cluster_mask = create_cluster_mask(combined, cluster_distance=50, alpha=40) # Further clustering on combined mask, may need tuning, or skip
 
-        otsu_optical[idx] = combined 
         # combined_masks[idx] = combined_cluster_mask
-
-
+        otsu_optical[idx] = combined 
 
     print(f"Combined masks computed with w_otsu={w_otsu}, w_cluster={w_cluster}, w_freehand={w_freehand}, threshold={threshold}")
 
     # Show combined masks (press 'q' to quit, 'p' to pause)
+    intensity_values = [] # store average intensities
     for i in range(firstFrameNumber, nframes):
         frame = video_strip[i]
         # combined = combined_masks[i]
         otsu_optical_mask = otsu_optical[i]
+
+        # Compute mean intensity inside the mask
+        mean_intensity = cv2.mean(frame, otsu_optical_mask)
+        intensity_values.append(mean_intensity)
 
         clustered_overlay = overlay_cluster_outline(frame, otsu_optical_mask) #may not need clustering
 
@@ -433,9 +398,162 @@ for file in all_files:
     plt.show()
 
 
+    ##############################
+    # Extrapolation work in progress
+    ##############################
+    # prev_area = 0
+    # last_width = 5  # initial width guess
 
-                                    
-            
+    # for i in range(firstFrameNumber, nframes):
+    #     frame = video_strip[i]
+    #     mask = otsu_optical[i]
+
+    #     # Parameters (to be tuned)
+    #     step = 5  # pixels to step along direction
+    #     bulge_rate = 0.1  # rate of width increase
+    #     missing_length = 50  # estimated missing length in pixels
+    #     injection_on = False  # whether injection is happening
+    #     time_since_stop = 10  # frames since motion stopped
+    #     kernel = np.ones((5,5), np.uint8)  # morphology kernel
+
+    #     extrapolated_mask = np.zeros_like(mask)
+
+    #     # Find tip and direction using skeletonization and line fitting
+
+    #     skeleton = cv2.ximgproc.thinning(mask)
+
+    #     ys, xs = np.where(skeleton > 0)
+    #     # If skeleton has too few points, fall back to contour points
+    #     if len(xs) < 2:
+    #         contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    #         if len(contours) == 0:
+    #             # Nothing to fit — skip extrapolation for this frame
+    #             print(f"Frame {i}: no mask pixels to fit line; skipping extrapolation.")
+    #             continue
+    #         # Use the largest contour's points as fallback
+    #         cnt = max(contours, key=cv2.contourArea)
+    #         pts = cnt.reshape(-1, 2)
+    #         xs = pts[:, 0]
+    #         ys = pts[:, 1]
+
+    #     pts = np.column_stack((xs.astype(np.float32), ys.astype(np.float32)))
+    #     # Need at least two points to fit a line
+    #     if pts.shape[0] < 2:
+    #         print(f"Frame {i}: not enough points ({pts.shape[0]}) to fit a line; skipping.")
+    #         continue
+
+    #     vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+    #     direction = np.array([vx, vy], dtype=np.float64)
+    #     norm = np.linalg.norm(direction)
+    #     if norm == 0:
+    #         print(f"Frame {i}: zero-length direction vector; skipping.")
+    #         continue
+    #     direction /= norm
+
+    #     # dir = 0.9 * dir_prev + 0.1 * dir_current
+
+    #     projections = (xs - x0) * direction[0] + (ys - y0) * direction[1]
+    #     tip_index = np.argmax(projections)
+    #     tip = np.array([xs[tip_index], ys[tip_index]])
+
+    #     perp = np.array([-direction[1], direction[0]])
+    #     #distance_from_origin → width
+
+    #     area = cv2.countNonZero(mask)
+    #     area_delta = area - prev_area
+
+    #     extrap_length = missing_length  # estimated or fixed
+    #     for d in range(0, extrap_length, step):
+    #         center = tip + direction * d
+
+    #     if injection_on:
+    #         width = last_width
+    #     else:
+    #         width = last_width + bulge_rate * time_since_stop
+                
+    #     cv2.line(
+    #         extrapolated_mask,
+    #         tuple((center - perp * width).astype(int)),
+    #         tuple((center + perp * width).astype(int)),
+    #         255,
+    #         thickness=1
+    #     )
+
+    #     final_mask = mask.copy()
+    #     final_mask[dark_region] = extrapolated_mask[dark_region]
+
+    #     final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel)
+
+    #     prev_area = area
+    #     last_width = width
+
+    #     # confidence *= 0.98
+    #     # width *= confidence
+    #     # length *= confidence
+
+
+
+
+    # Known spray origin (x, y)
+    spray_origin = (1, height // 2)
+    backfiller = SprayConeBackfill(spray_origin)
+
+    for i in range(firstFrameNumber, nframes):
+
+        # detection step
+        detected_mask = otsu_optical[i]
+        frame = video_strip[i]
+
+        # Backfill missing left-side cone
+        backfill_mask = backfiller.backfill(detected_mask)
+
+        # Merge
+        final_mask = cv2.bitwise_or(detected_mask, backfill_mask)
+
+        # Visualization
+        vis = frame.copy()
+        # Ensure vis is 3-channel BGR (frame may be grayscale)
+        if vis.ndim == 2 or (vis.ndim == 3 and vis.shape[2] == 1):
+            vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
+
+        # Create red overlay and apply mask
+        overlay = np.zeros_like(vis)
+        overlay[:] = (0, 0, 255)
+        final_mask = final_mask.astype(np.uint8) * 255
+
+        cv2.copyTo(overlay, final_mask, vis)
+
+        cv2.circle(vis, spray_origin, 4, (0, 255, 0), -1)
+
+        cv2.imshow("Spray Tracking", vis)
+        cv2.imshow("Detected Mask", detected_mask)
+        cv2.imshow("Final Mask", final_mask)
+
+        key = cv2.waitKey(100) & 0xFF
+        if key == ord('q'):
+            break
+        if key == ord('p'):
+            cv2.waitKey(-1)
+
+
+        # vis = frame.copy()
+        # # Ensure vis is 3-channel BGR
+        # if vis.ndim == 2 or (vis.ndim == 3 and vis.shape[2] == 1):
+        #     vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
+        # # Ensure final_mask matches frame size
+        # if final_mask.shape != vis.shape[:2]:
+        #     final_mask = cv2.resize(final_mask, (vis.shape[1], vis.shape[0]), interpolation=cv2.INTER_NEAREST)
+        # mask_bool = final_mask > 0
+        # # Only assign if there are masked pixels to avoid NumPy assignment errors when mask is empty
+        # if np.any(mask_bool):
+        #     vis[mask_bool] = (0, 0, 255)
+        # cv2.circle(vis, spray_origin, 4, (0, 255, 0), -1)
+
+
+
+print("Processing complete.")
+
+
 # import time
 # if __name__ == '__main__':
 #     from multiprocessing import freeze_support

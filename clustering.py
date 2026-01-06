@@ -66,6 +66,9 @@ def alpha_shape(points, alpha):
 
     return np.array(outline).astype(int)
 
+def QhullError(Exception):
+    pass
+
 
 def fast_alpha_shape(points, alpha, max_points=2000):
     """Faster alpha-shape using Delaunay with safety checks.
@@ -242,4 +245,35 @@ def overlay_cluster_outline(frame, cluster_mask):
     overlay = cv2.addWeighted(frame, 1.0, canvas, 1.0, 0)
     
     return overlay
+
+def convex_hull_mask(mask):
+    """
+    Create a filled mask from the convex hull of the contours in the input mask.
+    Returns a binary mask with the convex hull filled.
+    """
+    # Get contour points from mask
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    points = []
+    for cnt in contours:
+        for p in cnt:
+            points.append(p[0])  # (x, y)
+
+    if len(points) == 0:
+        return np.zeros_like(mask)
+
+    pts = np.array(points)
+
+    # Compute convex hull
+    try:
+        hull = ConvexHull(pts)
+        hull_pts = pts[hull.vertices]
+    except QhullError:
+        return np.zeros_like(mask)
+    
+    canvas = np.zeros_like(mask)
+    cv2.fillPoly(canvas, [hull_pts], 255)
+    
+    return canvas
+
 
