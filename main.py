@@ -21,15 +21,17 @@ from tkinter import filedialog
 # IDEAS:
     # use confidence mapping to combine optical flow and thresholding
     # instead of combining binary masks use confidence values from otsu thresholding and optical flow to create a weighted mask
+    # Have user set nozzle point and cut video automatically after rotation (Take 200 pixels up and down from nozzle point?, set nozzle point as far left point?)
 
 # TODO:
-    # combine optical flow with otsu thresholding for better results
+    # combine optical flow with otsu thresholding for better results (done)
     # improve clustering method to avoid holes in masks
-    # optimize performance for larger videos (multiprocessing?)
+        # maybe use morphological operations + fill, to close holes
+        # or add some interpolation algorithm to fill gaps in masks over time
+    # optimize performance for larger videos (CUDA?)
     # improve GUI for mask drawing and parameter tuning
-    # add option to save/load masks
-    # add some interpolation algorithm to fill gaps in masks over time
-    # add some extrapolation algorithm to extend masks before/after detected motion
+    # add option to save/load masks (TBD)
+    # add some extrapolation algorithm to extend masks before/after detected motion (partially done)
 
 # Hide the main tkinter window
 root = tk.Tk()
@@ -69,7 +71,7 @@ for file in all_files:
     ##############################
     # Video Rotation and Stripping
     ##############################
-    rotated_video = vpf.createRotatedVideo(video, 60)
+    rotated_video = vpf.createRotatedVideo(video, 60) # Rotate 60 degrees clockwise
     video_strip = vpf.createVideoStrip(rotated_video)
 
     firstFrameNumber = vpf.findFirstFrame(video_strip)
@@ -153,6 +155,17 @@ for file in all_files:
     #     if key == ord('p'):
     #         cv2.waitKey(-1)
     # cv2.destroyAllWindows() 
+
+    # video_strip = vpf.SVDfiltering(video_strip, k=5)
+    # for i in range(nframes):
+    #     frame = video_strip[i]
+    #     cv2.imshow('SVD filter', frame)
+    #     key = cv2.waitKey(40) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows()
 
     # vpf.removeBackgroundSimple(video_strip, first_frame, threshold=10)
     # for i in range(nframes):
@@ -412,7 +425,7 @@ for file in all_files:
     #       point from which 25(less?) degrees above and below and extends to end of frame and keep any detected areas inside that region.
     #       NOTE, keep areas outside of the angle IF they are connected to and area inside the angle. 
 
-    spray_origin = (1, height // 2)
+    spray_origin = (1, height // 2) # Known spray origin (x, y), TODO: add a way to set this interactively
 
     for i in range(firstFrameNumber, nframes):
 

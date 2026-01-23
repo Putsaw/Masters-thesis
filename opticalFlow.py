@@ -112,3 +112,34 @@ def runOpticalFlowCalculation(firstFrameNumber, video, method, deepflow=None):
         return cluster_masks, clustered_overlays, masks
     else:
         raise ValueError(f"Unsupported optical flow method: {method}")
+    
+
+
+def runOpticalFlowCalculationWeighted(firstFrameNumber, video, method, deepflow=None):
+    import cv2
+    import numpy as np
+
+    first_frame = video[firstFrameNumber]
+    prev_frame = first_frame
+
+    nframes = video.shape[0]
+    mag_array = np.zeros_like(video, dtype=np.float32)
+
+    if method == 'Farneback':
+        for i in range(firstFrameNumber, nframes//2): # limit to half for testing
+            frame = video[i]
+
+            flow = opticalFlowFarnebackCalculation(prev_frame, frame) 
+
+            # Compute magnitude (motion strength) and angle (not needed here)
+            mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+
+            mag_array[i] = mag
+
+            prev_frame = frame
+
+            print(f"Processed frame {i+1}/{nframes}")
+
+        return mag_array # return only magnitude for weighted processing
+    else:
+        raise ValueError(f"Unsupported optical flow method: {method}")

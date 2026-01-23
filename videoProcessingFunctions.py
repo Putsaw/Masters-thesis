@@ -358,3 +358,28 @@ def adaptive_background_subtraction(
     return np.stack(plume_masks)
 
 
+def SVDfiltering(video, k=10):
+    import numpy as np
+
+    nframes, height, width = video.shape
+
+    # Reshape to (nframes, height*width)
+    video_reshaped = video.reshape(nframes, -1).astype(np.float32)
+
+    # SVD
+    U, s, Vt = np.linalg.svd(video_reshaped, full_matrices=False)
+
+    # Reconstruct background with top k components
+    S_k = np.diag(s[:k])
+    background = U[:, :k] @ S_k @ Vt[:k, :]
+
+    # Subtract background
+    foreground = video_reshaped - background
+
+    # Clip to 0-255 and convert back to uint8
+    foreground = np.clip(foreground, 0, 255).astype(np.uint8)
+
+    # Reshape back
+    video_filtered = foreground.reshape(nframes, height, width)
+
+    return video_filtered
