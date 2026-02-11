@@ -50,7 +50,7 @@ def runOpticalFlowCalculation(firstFrameNumber, video, method, deepflow=None):
     masks =  np.zeros_like(video, dtype=np.uint8)
 
     if method == 'Farneback':
-        for i in range(firstFrameNumber, nframes//2): # limit to half for testing
+        for i in range(firstFrameNumber, nframes):
             frame = video[i]
 
             # --- Compute DeepFlow optical flow ---
@@ -126,7 +126,7 @@ def runOpticalFlowCalculationWeighted(firstFrameNumber, video, method, deepflow=
     mag_array = np.zeros_like(video, dtype=np.float32)
 
     if method == 'Farneback':
-        for i in range(firstFrameNumber, nframes//2): # limit to half for testing
+        for i in range(firstFrameNumber, nframes): # limit to half for testing
             frame = video[i]
 
             flow = opticalFlowFarnebackCalculation(prev_frame, frame) 

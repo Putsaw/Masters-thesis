@@ -215,6 +215,7 @@ def create_cluster_mask(mask, cluster_distance=30, alpha=30):
     canvas = np.zeros_like(mask)
 
     # For each cluster, compute concave hull and fill
+    clusters_with_area = []
     for label in set(labels):
         if label == -1:  # exclude noise
             continue
@@ -223,7 +224,14 @@ def create_cluster_mask(mask, cluster_distance=30, alpha=30):
 
         if len(cluster_pts) >= 5: # minimum points to run concave hull filling
             hull_pts = fast_alpha_shape(cluster_pts, alpha)
-            cv2.fillPoly(canvas, [hull_pts], 255)
+            # Calculate area of the hull
+            area = cv2.contourArea(hull_pts.astype(np.float32))
+            clusters_with_area.append((area, hull_pts))
+
+    # Keep only the largest clusters
+    clusters_with_area.sort(key=lambda x: x[0], reverse=True)
+    for area, hull_pts in clusters_with_area[:1]: # keep only largest x amount of clusters
+        cv2.fillPoly(canvas, [hull_pts], 255)
 
     return canvas
 
@@ -275,5 +283,146 @@ def convex_hull_mask(mask):
     cv2.fillPoly(canvas, [hull_pts], 255)
     
     return canvas
+
+
+def fill_holes_in_mask(mask):
+    """
+    Fill holes/gaps in a binary mask using floodFill from the boundaries.
+    Returns a mask with internal holes filled.
+    """
+    filled = mask.copy()
+    h, w = filled.shape[:2]
+    
+    # Use floodFill from all four edges to fill holes
+    # This fills all background regions connected to the boundary
+    for y in range(h):
+        if filled[y, 0] == 0:
+            cv2.floodFill(filled, None, (0, y), 255)
+        if filled[y, w-1] == 0:
+            cv2.floodFill(filled, None, (w-1, y), 255)
+    
+    for x in range(w):
+        if filled[0, x] == 0:
+            cv2.floodFill(filled, None, (x, 0), 255)
+        if filled[h-1, x] == 0:
+            cv2.floodFill(filled, None, (x, h-1), 255)
+    
+    # Invert to get the original mask with holes filled
+    filled = cv2.bitwise_not(filled)
+    # Restore the original non-zero regions
+    filled = cv2.bitwise_or(filled, mask)
+    
+    return filled
+
+
+def keep_largest_blob(mask, horizontal_threshold=50, spray_origin=None):
+    # TODO: add minimum size threshold to avoid keeping small noisy blobs, especially in front of the spray
+    """
+    Keep the largest connected component and any blobs horizontally close to it.
+    Returns a mask with the largest blob and horizontally nearby blobs.
+    
+    Args:
+        mask: Binary mask to process
+        horizontal_threshold: Maximum horizontal distance (pixels) to keep additional blobs
+        spray_origin: Tuple (x, y) of spray origin. If provided, only considers horizontal
+                      distance at the y-coordinate of the spray origin.
+    """
+    if np.count_nonzero(mask) == 0:
+        return np.zeros_like(mask)
+    
+    # Label connected components
+    num_labels, labels = cv2.connectedComponents(mask.astype(np.uint8))
+    
+    if num_labels <= 1:  # only background
+        return np.zeros_like(mask)
+    
+    # Find the largest blob (excluding background label 0)
+    largest_label = 0
+    largest_size = 0
+    for label in range(1, num_labels):
+        size = np.count_nonzero(labels == label)
+        if size > largest_size:
+            largest_size = size
+            largest_label = label
+    
+    # Create result mask starting with the largest blob
+    result = np.zeros_like(mask)
+    result[labels == largest_label] = 255
+    
+    if spray_origin is not None:
+        # Use spray origin y-coordinate for horizontal distance calculation
+        origin_y = int(spray_origin[1])
+        
+        # Get x-coordinates of largest blob at the spray origin y-level
+        largest_mask = (labels == largest_label).astype(np.uint8)
+        if origin_y < 0 or origin_y >= mask.shape[0]:
+            return result
+        
+        largest_row = np.where(largest_mask[origin_y, :] > 0)[0]
+        if len(largest_row) == 0:
+            return result
+        
+        largest_x_min = largest_row.min()
+        largest_x_max = largest_row.max()
+        
+        # Check all other blobs for horizontal proximity at spray origin y-level
+        for label in range(1, num_labels):
+            if label == largest_label:
+                continue
+            
+            blob_mask = (labels == label).astype(np.uint8)
+            blob_row = np.where(blob_mask[origin_y, :] > 0)[0]
+            
+            if len(blob_row) == 0:
+                continue
+            
+            blob_x_min = blob_row.min()
+            blob_x_max = blob_row.max()
+            
+            # Calculate horizontal distance at spray origin y-level
+            if blob_x_max < largest_x_min:
+                horizontal_distance = largest_x_min - blob_x_max
+            elif blob_x_min > largest_x_max:
+                horizontal_distance = blob_x_min - largest_x_max
+            else:
+                horizontal_distance = 0
+            
+            if horizontal_distance <= horizontal_threshold:
+                result[labels == label] = 255
+    else:
+        # Fall back to bounding box method if no spray origin provided
+        largest_mask = (labels == largest_label).astype(np.uint8)
+        largest_coords = np.column_stack(np.where(largest_mask > 0))
+        if len(largest_coords) == 0:
+            return result
+        
+        largest_x_min = largest_coords[:, 1].min()
+        largest_x_max = largest_coords[:, 1].max()
+        
+        for label in range(1, num_labels):
+            if label == largest_label:
+                continue
+            
+            blob_mask = (labels == label).astype(np.uint8)
+            blob_coords = np.column_stack(np.where(blob_mask > 0))
+            if len(blob_coords) == 0:
+                continue
+            
+            blob_x_min = blob_coords[:, 1].min()
+            blob_x_max = blob_coords[:, 1].max()
+            
+            if blob_x_max < largest_x_min:
+                horizontal_distance = largest_x_min - blob_x_max
+            elif blob_x_min > largest_x_max:
+                horizontal_distance = blob_x_min - largest_x_max
+            else:
+                horizontal_distance = 0
+            
+            if horizontal_distance <= horizontal_threshold:
+                result[labels == label] = 255
+    
+    return result
+
+
 
 

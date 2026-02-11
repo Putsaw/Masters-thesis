@@ -72,7 +72,7 @@ for file in all_files:
     # Video Rotation and Stripping
     ##############################
     rotated_video = vpf.createRotatedVideo(video, 60) # Rotate 60 degrees clockwise
-    video_strip = vpf.createVideoStrip(rotated_video)
+    video_strip = rotated_video
 
     firstFrameNumber = vpf.findFirstFrame(video_strip)
     first_frame = video_strip[firstFrameNumber]

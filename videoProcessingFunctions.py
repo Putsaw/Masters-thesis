@@ -64,21 +64,33 @@ def createRotatedVideo(video, angle):
     return rotated_video
 
 ################################
-# Creates a video strip by extracting the central strip of each frame
+# Creates a video strip by extracting a symmetric band around spray_origin
 ################################
-def createVideoStrip(video, strip_height = None):
-    # Come back later, spray height needs to be known beforehand
+def createVideoStrip(video, spray_origin, strip_half_height=200):
     import numpy as np
 
     nframes, height, width = video.shape
-    if strip_height is None:
-        strip_height = height
 
+    # Ensure integer row index
+    if isinstance(spray_origin, (tuple, list, np.ndarray)) and len(spray_origin) >= 2:
+        origin_row = spray_origin[1]
+    else:
+        origin_row = spray_origin
+    origin_row = int(round(origin_row)) # type: ignore
+    origin_row = max(0, min(height - 1, origin_row))
+
+    # Compute maximum symmetric half-height possible
+    max_above = min(strip_half_height, origin_row)
+    max_below = min(strip_half_height, (height - 1) - origin_row)
+    half_height = min(max_above, max_below)
+
+    start_row = origin_row - half_height
+    end_row = origin_row + half_height + 1
+
+    strip_height = end_row - start_row
     video_strip = np.zeros((nframes, strip_height, width), dtype=video.dtype)
 
     for i in range(nframes):
-        start_row = (height - strip_height) // 2
-        end_row = start_row + strip_height
         video_strip[i] = video[i, start_row:end_row, :]
 
     return video_strip
@@ -179,7 +191,6 @@ def adaptiveGaussianThreshold(video, maxValue=255, blockSize=11, C=2):
 
 
 def OtsuThreshold(video, background_mask):
-    #TODO: find better binarization than otsu's
     import cv2
     import numpy as np
 

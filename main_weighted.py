@@ -1,46 +1,36 @@
+from GUI_functions import *
 from clustering import *
-from extrapolation import SprayConeBackfill, extrapolate_cone
-from functions import *
-from functions_videos import *
-from functions_optical_flow import *
-from boundary2 import *
+from functions_videos import load_cine_video
+from data_capture import *
 
 import opticalFlow as of
 import videoProcessingFunctions as vpf
+import matplotlib.pyplot as plt
 from std_functions3 import *
-from fill import _fill_frame
 import tkinter as tk
 from tkinter import filedialog
 import json
 import os
 
 
-# IDEAS:
-    # Have user set nozzle point and cut video automatically after rotation (Take 200 pixels up and down from nozzle point?, set nozzle point as far left point?)
-
-
 # TODO:
-    # combine optical flow with otsu thresholding for better results (done)
-    # improve clustering method to avoid holes in masks
-        # maybe use morphological operations + fill, to close holes
-        # or add some interpolation algorithm to fill gaps in masks over time
     # optimize performance for larger videos (CUDA?)
     # improve GUI for mask drawing and parameter tuning
-    # add option to save/load masks (TBD)
-    # add some extrapolation algorithm to extend masks before/after detected motion (partially done)
     # Maybe standardize naming for videos to use the best settings automatically (TBD)
+    # Handle edge cases better, e.g. no motion detected, very short videos, etc?
+    # Handle multi file processing better, maybe with a progress bar or batch processing mode?
+        # nozzle selection process
+        # Combining data
+    # Add video saving
+    # Add cone angle display to overlay video
+    # Add more metrics to output CSV (spray area, tip velocity, nozzle opening/closing time, etc)
+
 
 # Hide the main tkinter window
 root = tk.Tk()
 root.withdraw()
 
-# Load saved spray origins
-origins_file = 'spray_origins.json'
-if os.path.exists(origins_file):
-    with open(origins_file, 'r') as f:
-        spray_origins = json.load(f)
-else:
-    spray_origins = {}
+
 
 ################################
 # Load Video Files
@@ -76,54 +66,22 @@ for file in all_files:
     ##############################
     # Video Rotation and Stripping
     ##############################
-    rotated_video = vpf.createRotatedVideo(video, 60) # Rotate 60 degrees clockwise
+    rotation_angle = 60  # degrees clockwise, adjust as needed
+    rotated_video = vpf.createRotatedVideo(video, rotation_angle) # Rotate 60 degrees clockwise
+    firstFrameNumber = vpf.findFirstFrame(rotated_video, threshold=10) # Find first frame with intensity above threshold
 
-    video_strip = vpf.createVideoStrip(rotated_video)
+    spray_origin = set_spray_origin(file, rotated_video, firstFrameNumber, nframes, height) # Get spray origin from user input or saved data, expects (x, y) format
 
-    firstFrameNumber = vpf.findFirstFrame(video_strip)
-    first_frame = video_strip[firstFrameNumber]
-
-    # Set spray origin
-    if file in spray_origins:
-        spray_origin = tuple(spray_origins[file])
-        print(f"Reusing spray origin for {file}: {spray_origin}")
+    if True: # Set to False to disable stripping and use full rotated video
+        video_strip = vpf.createVideoStrip(rotated_video, spray_origin, strip_half_height=200)
+        nframes, height, width = video_strip.shape[:3]
+        # After stripping, reset spray origin to center vertically while keeping x unchanged
+        spray_origin = (spray_origin[0], height // 2)
     else:
-        # UI to select
-        class PointHolder:
-            def __init__(self):
-                self.point = None
-        
-        holder = PointHolder()
-        def select_origin(event, x, y, flags, param):
-            if event == cv2.EVENT_LBUTTONDOWN:
-                holder.point = (x, y)  # type: ignore
-                print(f"Selected spray origin: {holder.point}")
-        
-        cv2.imshow('Set Spray Origin - Click on the nozzle', video_strip[firstFrameNumber+100]) # Show a frame after firstFrameNumber for context, may need adjustment
-        cv2.setMouseCallback('Set Spray Origin - Click on the nozzle', select_origin)
-        
-        current_frame = firstFrameNumber + 100
-        while holder.point is None:
-            key = cv2.waitKeyEx(10)
-            if key == ord('q'):
-                break
-            elif key == 2424832:  # left arrow
-                current_frame = max(firstFrameNumber, current_frame - 1)
-                cv2.imshow('Set Spray Origin - Click on the nozzle', video_strip[current_frame])
-            elif key == 2555904:  # right arrow
-                current_frame = min(nframes - 1, current_frame + 1)
-                cv2.imshow('Set Spray Origin - Click on the nozzle', video_strip[current_frame])
-        cv2.destroyWindow('Set Spray Origin - Click on the nozzle')
-        
-        if holder.point is None:
-            spray_origin = (1, height // 2)  # Default
-        else:
-            spray_origin = holder.point
-        
-        # Save
-        spray_origins[file] = list(spray_origin)
-        with open(origins_file, 'w') as f:
-            json.dump(spray_origins, f)
+        video_strip = rotated_video
+        nframes, height, width = video_strip.shape[:3]
+
+    first_frame = video_strip[firstFrameNumber]
 
     ##############################
     # Freehand Mask Creation
@@ -184,23 +142,21 @@ for file in all_files:
     ##############################
     # Filter Visualization
     ###############################
-    vpf.applyCLAHE(video_strip)
+    video_strip = vpf.applyCLAHE(video_strip)
 
-
-    background_mask = vpf.createBackgroundMask(first_frame, threshold=20) # Chamber walls have an intensity of about 3
-    # otsu_video = vpf.OtsuThreshold(video_strip, background_mask)
-    cv2.imshow("Background Mask", background_mask)
+    background_mask = vpf.createBackgroundMask(first_frame, threshold=20) # Threshold to remove chamber walls
+    cv2.imshow("Background Mask", background_mask) # Display background mask for verification, press any key to continue
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-
 
 
     ##############################
     # Optical Flow Visualization
     ##############################
-    use_intensity_only = False  # If True, set w_magnitude=0 and use 80% thresholding instead of 95%
+    use_intensity_only = False  # If True, set w_magnitude=0 and use otsu as thresholding, CONSIDER REMOVING AS CUMULATIVE MASK DOES THE SAME THING BUT BETTER PROBABLY
 
-    use_cumulative_as_mask = False  # if True, use cumulative_mask to restrict areas for intensity score
+    use_cumulative_as_mask = True  # if True, use cumulative_mask to restrict areas for intensity score, and set w_magnitude=0,
+                                    # effectively using cumulative motion detection as a mask for intensity-based detection
     
     if use_intensity_only:
         print("Using intensity-only mode (no optical flow contribution).")
@@ -210,35 +166,27 @@ for file in all_files:
         mag_array = of.runOpticalFlowCalculationWeighted(firstFrameNumber, video_strip, method='Farneback')
 
     
-    # GOAL: if both otsu and cluster masks agree, keep the region
     # mag values above 0.4 are considered motion
-    # IDEA: cap the mag values to 0.4, anything above is full confidence of motion
-    #       also if intensity or mag has high enough confidence separately, keep the region
-    #       Find a good method for dynamic thresholding of the combined score
-    # NOTE: freehand mask is binary, so areas inside have full confidence, outside have zero confidence
-    #       add a system to increase confidence in nearby areas? (gaussian blur?) or increase weight of neighboring pixels. 
-    #
-    #       add a system to remove the pre-injection frames from consideration? e.g. find a method to detect when motion starts and only consider frames after that point
-    #           or create a way to remove pre-injection noise. (done partially by only starting to write masks after firstFrameNumber and 5 consecutive high mag frames)
-    #
-    #       add either full motion confidence to areas inside dark regions with no detected motion and motion detected around it, or set motion values
-    #           under a certain threshold to 1. (will have to cut out areas outside chamber first)
+    # IDEAS:
+    #       For cumulative mask, do a morphological erosion every few frames to restrict to areas with consistent motion
     #
     #       Option to add an automated weight setting system which tries to optimize weights based on some criteria?
     #           Will be a lot of work to implement though.
     #
-    #       Add a system to keep areas of high motion during playback to fill in gaps in the detected area when the center of the spray is not detected well.
-
-    # PROBLEMS: Thresholding is tricky, also combining the different confidence values is tricky
+    #       Add a minimum size threshold to remove small noisy detections, maybe based on the expected size of the spray at different frames
+    #
+    #       Add a minumum size threshold for the blobs in keep_largest_blob, to avoid keeping a small noisy region in front of the spray
+    #           Threshold needs to be set low enough that the cone mask can still detect the spray.
+    
+    # PROBLEMS:
     #           Maybe values over 0.4 in mag should not be set to 1.0 but a lower value, to reduce the dominance of mag in the combination?
+    #
+    #           Optical flow causes a small area around the chamber walls to be detected as motion. May need to find a way to remove that.
+    #
+    #           Reconsider high motion detection method:
+    #
+    #           Cone mask is broken for HPH2, needs adjustment.
 
-    #           Optical flow causes a small area around the chamber walls to be detected as motion. Need to find a way to remove that.
-    #
-    #           Reconsider high motion detection method: currently if any pixel in frame has mag > 0.5 for 5 consecutive frames, masks are written.
-    #
-    #           Reconsider cone mask, instead maybe use it to cut off areas outside the cone after combining scores?
-    #
-    #           Rethink dynamic thresholding method, currently uses 95th percentile of combined score, maybe use Otsu or a lower percentile?
 
     # maybe if magnitude is close to zero then intensity should have more weight? not sure how to implement that nicely though.
 
@@ -246,9 +194,9 @@ for file in all_files:
     # Parameters: weights (normalized internally) and binary threshold on combined score (0.0 - 1.0)
 
     w_intensity = 0.4   # weight for per-pixel light intensity
-    w_magnitude = 0.6  # weight for optical flow magnitude
-    w_freehand = 0.3    # weight for freehand mask
-    w_cone = 0.2    # weight for cone mask
+    w_magnitude = 0.8  # weight for optical flow magnitude
+    w_freehand = 0.1    # weight for freehand mask
+    w_cone = 0.6    # weight for cone mask
     intensity_gamma = 3.0  # gamma correction for intensity score to amplify differences in dark areas, higher = more contrast
 
     
@@ -256,29 +204,26 @@ for file in all_files:
         w_magnitude = 0
     if use_cumulative_as_mask:
         w_magnitude = 0
-        # w_cone = 0
-        w_intensity = 1.0
+        w_intensity = 2.0
 
-
-    # Create cone mask from spray origin (25 degrees upper and lower from horizontal, to the right)
-    # Inside cone: 1.0, outside: linearly decrease to 0 over 45 degrees
-    cone_mask = np.zeros((height, width), dtype=np.float32)
+    # Precompute full cone mask once; trim per frame based on penetration
     origin_x, origin_y = spray_origin
-    cone_angle = 25  # degrees
-    falloff_angle = 50  # degrees over which it decreases to 0
-    for i in range(height):
-        for j in range(width):
-            dx = j - origin_x
-            dy = i - origin_y
-            if dx > 0:
-                angle = np.degrees(np.arctan2(dy, dx))
-                abs_angle = abs(angle)
-                if abs_angle <= cone_angle:
-                    cone_mask[i, j] = 1.0
-                elif abs_angle <= cone_angle + falloff_angle:
-                    cone_mask[i, j] = 1.0 - (abs_angle - cone_angle) / falloff_angle
-                # else 0.0
-    cone_mask_f = cone_mask
+    cone_angle_deg = 20  # degrees (renamed to avoid conflict with cone_angle array)
+    falloff_angle = 30  # degrees over which it decreases to 0
+    min_cone_length = 100  # minimum cone length in pixels
+    max_cone_length = max(0, width - origin_x - 1)
+    yy_full, xx_full = np.ogrid[:height, :width]
+    dx_full = xx_full - origin_x
+    dy_full = yy_full - origin_y
+    angle_full = np.degrees(np.arctan2(dy_full, dx_full))
+    abs_angle_full = np.abs(angle_full)
+
+    full_cone_mask = np.zeros((height, width), dtype=np.float32)
+    in_forward = dx_full > 0
+    in_main = in_forward & (abs_angle_full <= cone_angle_deg)
+    in_falloff = in_forward & (abs_angle_full > cone_angle_deg) & (abs_angle_full <= cone_angle_deg + falloff_angle)
+    full_cone_mask[in_main] = 1.0
+    full_cone_mask[in_falloff] = 1.0 - (abs_angle_full[in_falloff] - cone_angle_deg) / falloff_angle
 
     # Prepare combined masks array (final binary masks) and a diagnostic combined score array
     combined_masks = np.zeros_like(video_strip, dtype=np.uint8)
@@ -286,6 +231,16 @@ for file in all_files:
     intensity_scores = np.zeros_like(video_strip, dtype=np.float32)
     mag_scores = np.zeros_like(video_strip, dtype=np.float32)
     cumulative_masks = np.zeros_like(video_strip, dtype=np.uint8)
+
+    cone_masks = np.zeros_like(video_strip, dtype=np.uint8)
+
+    boundaries = []
+    penetration = np.zeros(nframes, dtype=np.float32)
+    cone_angle = np.zeros(nframes, dtype=np.float32)
+    cone_angle_reg = np.zeros(nframes, dtype=np.float32)
+    close_point_distance = np.zeros(nframes, dtype=np.float32)
+    angle_d = rotation_angle  # rotation angle in degrees
+    spray_area = np.zeros(nframes, dtype=np.float32)
 
     # Load freehand mask created earlier by the user (expects single-channel binary image "mask.png")
     freehand_mask = cv2.imread("mask.png", cv2.IMREAD_GRAYSCALE)
@@ -306,9 +261,16 @@ for file in all_files:
     norm_freehand = w_freehand / total_w
     norm_cone = w_cone / total_w
 
-    eps = 1e-6
-    high_mag_counter = 0
+    eps = 1e-6 # small value to avoid division by zero
     cumulative_mask = np.zeros((height, width), dtype=np.uint8)
+
+    write_masks_started = False
+    # Precompute circular ROI around spray origin (radius = 100 px)
+    # Consider changing circle to cone shape later
+    roi_radius = 100
+    yy, xx = np.ogrid[:height, :width]
+    circle_mask = (xx - origin_x) ** 2 + (yy - origin_y) ** 2 <= roi_radius ** 2
+
     for idx in range(nframes):
         # --- Intensity: per-frame robust normalization invariant to lighting ---
         frame = video_strip[idx]
@@ -355,16 +317,34 @@ for file in all_files:
         # Accumulate areas with mag_n == 1.0
         new_areas = (mag_n > 0.99).astype(np.uint8) * 255
         cumulative_mask = np.maximum(cumulative_mask, new_areas)
-        cumulative_masks[idx] = cumulative_mask.copy() # TODO: Decide what to do with this, add to score does not work
+        # cumulative_mask = cv2.erode(cumulative_mask, np.ones((5,5), np.uint8), iterations=1)  # erode to keep only consistent areas
 
-        # Check for high magnitude values to start writing masks
+        cumulative_masks[idx] = cumulative_mask.copy()
+
+        # Check for high magnitude values near the spray origin to start writing masks
         if idx >= firstFrameNumber:
-            if np.any(mag >= 0.5): # threshold to consider "high" motion detected, intended to avoid noise before injection
-                high_mag_counter += 1
-            else:
-                high_mag_counter = 0
+            motion_near_origin = np.any(mag[circle_mask] >= 0.5)
+            if motion_near_origin:
+                write_masks_started = True
+                w_cone = 1.0  # once motion is detected, set cone weight to normal
         else:
-            high_mag_counter = 0
+            motion_near_origin = False
+
+        # --- Trim precomputed cone mask based on previous frame penetration ---
+        if idx > 0:
+            cone_length = max(penetration[idx - 1] + 50, min_cone_length)
+        else:
+            cone_length = min_cone_length + 50
+        cone_length = min(cone_length, max_cone_length)
+
+        cone_mask_f = full_cone_mask.copy()
+        if cone_length < max_cone_length:
+            cutoff_x = int(origin_x + cone_length)
+            if cutoff_x + 1 < width:
+                cone_mask_f[:, cutoff_x + 1:] = 0.0
+
+        cone_masks[idx] = (cone_mask_f * 255).astype(np.uint8) # for diagnostics, to be removed later
+
         freehand = freehand_mask_f  # already 0.0 or 1.0
 
         # --- Cone mask normalized ---
@@ -388,61 +368,173 @@ for file in all_files:
         # Optional: map combined_score to 0..255 for diagnostics
         combined_255 = np.clip((combined_score * 255.0), 0, 255).astype(np.uint8)
 
-        # Dynamic thresholding: use 95th percentile or Otsu (for intensity-only or cumulative)
-        # Original: dynamic_threshold = np.percentile(combined_score, 80)
+        # --- Dynamic Thresholding ---
         if use_intensity_only or use_cumulative_as_mask:
             # Use Otsu's thresholding
             combined_uint8 = (combined_score * 255).astype(np.uint8)
             otsu_thresh, _ = cv2.threshold(combined_uint8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             dynamic_threshold = otsu_thresh / 255.0
+            threshold_mask = (combined_score >= dynamic_threshold).astype(np.uint8) * 255
         else:
-            # Use 95th percentile
-            dynamic_threshold = np.percentile(combined_score, 95)
+            # Use 80th percentile of peak score
+            peak = combined_score.max()
+            threshold_mask = (combined_score >= 0.8 * peak).astype(np.uint8) * 255
 
-        # Threshold to binary mask
-        final_mask = (combined_score >= dynamic_threshold).astype(np.uint8) * 255
+        combined_score = cv2.GaussianBlur(combined_score, (5,5), 0)
 
         # Exclude background areas
-        final_mask[background_mask == 0] = 0
+        threshold_mask[background_mask == 0] = 0
 
-        # Small morphological cleanup to remove noise
+        # OPTIONAL morphological cleanup to remove noise
         # kernel = np.ones((5,5), np.uint8)
-        # final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_OPEN, kernel)
-        # final_mask = cv2.dilate(final_mask, kernel, iterations=1)
-        # final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel)
+        # threshold_mask = cv2.morphologyEx(threshold_mask, cv2.MORPH_OPEN, kernel)
+        # threshold_mask = cv2.dilate(threshold_mask, kernel, iterations=1)
+        # threshold_mask = cv2.morphologyEx(threshold_mask, cv2.MORPH_CLOSE, kernel)
 
-        # Store only if high mag counter >= 5
-        if high_mag_counter >= 5:
-            combined_masks[idx] = final_mask
+
+
+        # Convert spray_origin from (x, y) to (row, col) format for analyze_boundary
+        nozzle_point_rc = np.array([spray_origin[1], spray_origin[0]], dtype=np.float32)
+
+        if use_intensity_only or use_cumulative_as_mask:
+            # skip clustering for intensity-only mode and cumulative mask mode
+            final_mask = fill_holes_in_mask(threshold_mask)
+            # Keep only largest blob, connects multiple disjoint regions if present, horizontal threshold determines how far apart blobs can be to be considered connected
+            final_mask = keep_largest_blob(final_mask, horizontal_threshold=50, spray_origin=spray_origin) 
+            final_cluster_masks[idx] = final_mask
         else:
-            combined_masks[idx] = np.zeros_like(final_mask)
+            # --- Clustering to get final clean outline ---
+            # Cluster distance determines how close points have to be to be considered part of the same cluster, higher = larger clusters
+            # Alpha determines concaveness of the hull, higher = more convex, infinity would be full convex, lower = more concave, too low = holes
+            final_mask = create_cluster_mask(threshold_mask, cluster_distance=40, alpha=30) 
+            final_cluster_masks[idx] = final_mask
+
+        # Store only after motion is detected near the spray origin (latched)
+        if write_masks_started:
+            combined_masks[idx] = threshold_mask
+            # --- Analyze boundary ---
+            frame_boundaries, frame_pen, frame_ang, frame_ang_reg, frame_cpd = analyze_boundary(final_mask, angle_d=angle_d, nozzle_point=nozzle_point_rc)
+        else:
+            combined_masks[idx] = np.zeros_like(threshold_mask)
+            frame_boundaries = []
+            frame_pen = 0.0
+            frame_ang = 0.0
+            frame_ang_reg = 0.0
+            frame_cpd = 0.0
+
+        boundaries.append(frame_boundaries)
+        penetration[idx] = frame_pen
+        cone_angle[idx] = frame_ang # may need adjustment based on research paper standard
+        cone_angle_reg[idx] = frame_ang_reg
+        close_point_distance[idx] = frame_cpd
+        tip_velocity = np.gradient(penetration) # derivative of penetration over time
+        spray_area[idx] = np.sum(final_mask > 0)  # number of pixels in mask
+        nozzle_opening_time = 0  # placeholder, needs logic to determine first frame with motion detected
+        nozzle_closing_time = 0  # placeholder, needs logic to determine last frame with high motion
+        # ADD spray volume
+
+        #TODO: add tip velocity (derivative of penetration)
+        #      add spray area (number of pixels in mask)
+        #      add nozzle opening time (frame number - firstFrameNumber with motion detected)
+        #      add nozzle closing time (last frame number with high motion detected? - frame number)
 
 
-        # final_cluster_mask = create_cluster_mask(final_mask, cluster_distance=30, alpha=30)
-        # final_cluster_masks[idx] = final_cluster_mask
+    print(f"Final masks computed with w_intensity={w_intensity}, w_magnitude={w_magnitude}, w_freehand={w_freehand}, w_cone={w_cone}, intensity_gamma={intensity_gamma}, use_cumulative_as_mask={use_cumulative_as_mask}, dynamic thresholding (Otsu if cumulative mask or intensity-only, else 95th percentile)")
 
-    print(f"Final masks computed with w_intensity={w_intensity}, w_magnitude={w_magnitude}, w_freehand={w_freehand}, w_cone={w_cone}, intensity_gamma={intensity_gamma}, use_cumulative_as_mask={use_cumulative_as_mask}, dynamic thresholding (Otsu if cumulative mask or intensity-only, else 95th percentile)")  
+    # Prepare results output paths
+    results_dir = os.path.join(os.getcwd(), 'Results')
+    os.makedirs(results_dir, exist_ok=True)
+    output_base = os.path.basename(file).replace('.cine', '')
+    output_csv = os.path.join(results_dir, f"{output_base}_spray_metrics.csv")
+    output_video = os.path.join(results_dir, f"{output_base}_overlay.mp4")
 
     # Show combined masks (press 'q' to quit, 'p' to pause)
     intensity_values = [] # store average intensities
-    for i in range(firstFrameNumber, nframes):
+    video_writer = None
+    video_fps = 30
+    for i in range(nframes):
         frame = video_strip[i]
         combined = combined_masks[i]
-        # cluster = final_cluster_masks[i]
+        cluster = final_cluster_masks[i]
+        cone = cone_masks[i]
+
+        overlay = overlay_cluster_outline(frame, cluster)
+        # Ensure overlay is 3-channel BGR so colored drawings show up
+        if overlay.ndim == 2 or (overlay.ndim == 3 and overlay.shape[2] == 1):
+            overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2BGR)
+        # Draw spray origin and penetration line on overlay
+        origin_x, origin_y = spray_origin
+        tip_x = int(np.clip(origin_x + penetration[i], 0, width - 1))
+        tip_y = int(np.clip(origin_y, 0, height - 1))
+        cv2.line(overlay, (int(origin_x), int(origin_y)), (tip_x, tip_y), (0, 255, 255), 5)  # yellow line for penetration
+        # Vertical line at penetration tip
+        tip_half_len = 40
+        y1 = int(np.clip(tip_y - tip_half_len, 0, height - 1))
+        y2 = int(np.clip(tip_y + tip_half_len, 0, height - 1))
+        cv2.line(overlay, (tip_x, y1), (tip_x, y2), (0, 255, 255), 3)
+        cv2.circle(overlay, (int(origin_x), int(origin_y)), 4, (0, 0, 255), -1) 
 
         # Compute mean intensity inside the mask
         mean_intensity = cv2.mean(frame, combined)
         intensity_values.append(mean_intensity)
 
-        # clustered_overlay = overlay_cluster_outline(frame, otsu_optical_mask) #may not need clustering
+        # Resize all images to the same size for stacking (e.g., 640x320)
+        def resize(img, size=(640, 320)):
+            return cv2.resize(img, size, interpolation=cv2.INTER_AREA)
 
-        # cv2.imshow('Otsu + Optical flow', otsu_optical_mask)
-        cv2.imshow('Combined Mask', combined)
-        cv2.imshow('Original', frame)
-        # cv2.imshow('Clustered Mask', cluster)
-        cv2.imshow('Intensity Score', (intensity_scores[i] * 255).astype(np.uint8))
-        cv2.imshow('Magnitude Score', (mag_scores[i] * 255).astype(np.uint8))
-        cv2.imshow('Cumulative High Motion Mask', cumulative_masks[i])
+        def ensure_bgr(img):
+            if img.ndim == 2 or (img.ndim == 3 and img.shape[2] == 1):
+                return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            return img
+
+        frame_disp = ensure_bgr(resize(frame))
+        combined_disp = ensure_bgr(resize(combined))
+        cluster_disp = ensure_bgr(resize(cluster))
+        intensity_disp = ensure_bgr(resize((intensity_scores[i] * 255).astype(np.uint8)))
+        mag_disp = ensure_bgr(resize((mag_scores[i] * 255).astype(np.uint8)))
+        cumulative_disp = ensure_bgr(resize(cumulative_masks[i]))
+        cone_disp = ensure_bgr(resize(cone))
+        freehand_disp = ensure_bgr(resize((freehand_mask_f * 255).astype(np.uint8)))
+        overlay_disp = ensure_bgr(resize(overlay))
+
+        # Add labels to each image
+        # Use yellow text for visibility on both black and white backgrounds
+        text_color = (0, 255, 255)  # BGR for yellow
+        # Draw black border first (thicker)
+        cv2.putText(frame_disp, f"Frame {i}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+        cv2.putText(combined_disp, "Combined Weighted Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+        cv2.putText(cluster_disp, "Clustered Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+        cv2.putText(intensity_disp, "Intensity Score", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+        cv2.putText(mag_disp, "Optical Flow Magnitude", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+        cv2.putText(cumulative_disp, "Cumulative Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+        cv2.putText(cone_disp, "Cone Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+        cv2.putText(freehand_disp, "Freehand Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+        cv2.putText(overlay_disp, "Overlay", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 4)
+
+        # Draw yellow text on top (thinner)
+        cv2.putText(frame_disp, f"Frame {i}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(combined_disp, "Combined Weighted Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(cluster_disp, "Clustered Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(intensity_disp, "Intensity Score", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(mag_disp, "Optical Flow Magnitude", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(cumulative_disp, "Cumulative Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(cone_disp, "Cone Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(freehand_disp, "Freehand Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(overlay_disp, "Overlay", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+
+        # Now stack and show as before
+        row1 = np.hstack([frame_disp, combined_disp, cluster_disp])
+        row2 = np.hstack([intensity_disp, mag_disp, cumulative_disp])
+        row3 = np.hstack([cone_disp, freehand_disp, overlay_disp])
+        grid = np.vstack([row1, row2, row3])
+
+        cv2.imshow('All Results', grid)
+
+        if video_writer is None:
+            h, w = overlay.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # type: ignore
+            video_writer = cv2.VideoWriter(output_video, fourcc, video_fps, (w, h))
+        video_writer.write(overlay)
 
         key = cv2.waitKey(100) & 0xFF
         if key == ord('q'):
@@ -451,8 +543,10 @@ for file in all_files:
             cv2.waitKey(-1)
 
     cv2.destroyAllWindows()
+    if video_writer is not None:
+        video_writer.release()
 
-
+    """
     # --- Analyze intensity values ---
     # Needs more work, maybe diffent method to find significant changes
 
@@ -489,106 +583,45 @@ for file in all_files:
     plt.ylabel("Mean Intensity Inside Region")
     plt.title("Intensity Over Time (Shifted)")
     plt.show()
+    """
+    # --- Plot all CSV metrics in a grid ---
+    frames = np.arange(nframes)
+    fig, axes = plt.subplots(2, 3, figsize=(14, 8), sharex=True)
 
+    axes[0, 0].plot(frames, penetration)
+    axes[0, 0].set_title("Penetration")
+    axes[0, 0].set_ylabel("Pixels")
 
-    ##############################
-    # Extrapolation work in progress
-    ##############################
+    axes[0, 1].plot(frames, cone_angle)
+    axes[0, 1].set_title("Cone Angle")
+    axes[0, 1].set_ylabel("Degrees")
 
+    axes[0, 2].plot(frames, cone_angle_reg)
+    axes[0, 2].set_title("Regularized Cone Angle")
+    axes[0, 2].set_ylabel("Degrees")
 
-    # IDEA: fill the area close to the nozzle, take an area close to the nozzle of the detection area (left most side to middle?)
-    #       calculate the angle which it makes up, and fill the resulting cone.
-    #       Maybe use a system which detects if the area around the nozzle is hidden, if not then don't run
-    # PROBLEMS: detected area needs to be noise free (although probably should be anyway)
-    #       Close point calculation will not work... not that it would've worked anyway
-    #       Need to add a way to remove noise outside of detection as a pre-process, idea is to use the nozzle as the
-    #       point from which 25(less?) degrees above and below and extends to end of frame and keep any detected areas inside that region.
-    #       NOTE, keep areas outside of the angle IF they are connected to and area inside the angle. 
+    axes[1, 0].plot(frames, close_point_distance)
+    axes[1, 0].set_title("Close Point Distance")
+    axes[1, 0].set_ylabel("Pixels")
+    axes[1, 0].set_xlabel("Frame Number")
 
-    # spray_origin = (1, height // 2) # Known spray origin (x, y), TODO: add a way to set this interactively
+    axes[1, 1].plot(frames, spray_area)
+    axes[1, 1].set_title("Spray Area")
+    axes[1, 1].set_ylabel("Pixels$^2$")
+    axes[1, 1].set_xlabel("Frame Number")
 
-    # for i in range(firstFrameNumber, nframes):
+    # Hide unused subplot (2x3 grid but only 5 metrics)
+    axes[1, 2].axis("off")
 
-    #     detected_mask = otsu_optical[i]
+    fig.suptitle("Spray Metrics Over Time")
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])  # type: ignore
+    plt.show()
 
-    #     final_mask = extrapolate_cone(detected_mask, spray_origin, min_points=1)
-
-    #     cv2.imshow("Final Mask", final_mask)
-
-    #     key = cv2.waitKey(100) & 0xFF
-    #     if key == ord('q'):
-    #         break
-    #     if key == ord('p'):
-    #         cv2.waitKey(-1)
-
-
-    # Known spray origin (x, y)
-    # spray_origin = (1, height // 2)
-    # backfiller = SprayConeBackfill(spray_origin)
-
-    # for i in range(firstFrameNumber, nframes):
-
-    #     # detection step
-    #     detected_mask = otsu_optical[i]
-    #     frame = video_strip[i]
-
-    #     # Backfill missing left-side cone
-    #     backfill_mask = backfiller.backfill(detected_mask)
-
-    #     # Merge
-    #     final_mask = cv2.bitwise_or(detected_mask, backfill_mask)
-
-    #     # Visualization
-    #     vis = frame.copy()
-    #     # Ensure vis is 3-channel BGR (frame may be grayscale)
-    #     if vis.ndim == 2 or (vis.ndim == 3 and vis.shape[2] == 1):
-    #         vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
-
-    #     # Create red overlay and apply mask
-    #     overlay = np.zeros_like(vis)
-    #     overlay[:] = (0, 0, 255)
-    #     final_mask = final_mask.astype(np.uint8) * 255
-
-    #     cv2.copyTo(overlay, final_mask, vis)
-
-    #     cv2.circle(vis, spray_origin, 4, (0, 255, 0), -1)
-
-    #     cv2.imshow("Spray Tracking", vis)
-    #     cv2.imshow("Detected Mask", detected_mask)
-    #     cv2.imshow("Final Mask", final_mask)
-
-    #     key = cv2.waitKey(100) & 0xFF
-    #     if key == ord('q'):
-    #         break
-    #     if key == ord('p'):
-    #         cv2.waitKey(-1)
-
-
-        # vis = frame.copy()
-        # # Ensure vis is 3-channel BGR
-        # if vis.ndim == 2 or (vis.ndim == 3 and vis.shape[2] == 1):
-        #     vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
-        # # Ensure final_mask matches frame size
-        # if final_mask.shape != vis.shape[:2]:
-        #     final_mask = cv2.resize(final_mask, (vis.shape[1], vis.shape[0]), interpolation=cv2.INTER_NEAREST)
-        # mask_bool = final_mask > 0
-        # # Only assign if there are masked pixels to avoid NumPy assignment errors when mask is empty
-        # if np.any(mask_bool):
-        #     vis[mask_bool] = (0, 0, 255)
-        # cv2.circle(vis, spray_origin, 4, (0, 255, 0), -1)
-
+    # Generate output CSV in a local Results folder
+    with open(output_csv, 'w') as f:
+        f.write("Frame,Penetration (pixels), Cone Angle (degrees), Regularized Cone Angle (degrees), Close Point Distance (pixels), Spray Area (pixels^2)\n")
+        for i in range(nframes):
+            f.write(f"{i},{penetration[i]},{cone_angle[i]},{cone_angle_reg[i]},{close_point_distance[i]},{spray_area[i]}\n")
 
 
 print("Processing complete.")
-
-
-# import time
-# if __name__ == '__main__':
-#     from multiprocessing import freeze_support
-#     freeze_support()  # Optional: Needed if freezing to an executable
-
-#     start_time = time.time()
-#     main()
-#     elapsed_time = time.time() - start_time
-
-#     print(f"Sequential main() finished in {elapsed_time:.2f} seconds.")
