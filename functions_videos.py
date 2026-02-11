@@ -1,5 +1,10 @@
-from packages import *
-
+import os
+import numpy as np
+from pathlib import Path
+import cv2
+import concurrent.futures
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import pycine.file as cine  # Ensure the pycine package is installed
 
 # -----------------------------
 # Cine video reading and playback
@@ -67,104 +72,3 @@ def play_video_cv2(video, gain=1):
         if cv2.waitKey(60) & 0xFF == ord('q'):
             break
     cv2.destroyAllWindows()
-
-
-
-# -----------------------------
-# Rotation and Filtering functions
-# -----------------------------
-def rotate_frame(frame, angle):
-    (h, w) = frame.shape[:2]
-    center = (w // 2, h // 2)
-    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-    
-    if frame.dtype == np.bool_:
-        # Convert boolean mask to uint8: True becomes 255, False becomes 0.
-        frame_uint8 = (frame.astype(np.uint8)) * 255
-        # Use INTER_NEAREST to preserve mask values.
-        rotated_uint8 = cv2.warpAffine(frame_uint8, M, (w, h), flags=cv2.INTER_NEAREST)
-        # Convert back to boolean mask.
-        rotated = rotated_uint8 > 127
-    else:
-        rotated = cv2.warpAffine(frame, M, (w, h), flags=cv2.INTER_CUBIC)
-    
-    return rotated
-
-
-def rotate_video(video_array, angle=0, max_workers=None):
-    num_frames = video_array.shape[0]
-    rotated_frames = [None] * num_frames
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_index = {executor.submit(rotate_frame, video_array[i], angle): i 
-                           for i in range(num_frames)}
-        for future in as_completed(future_to_index):
-            idx = future_to_index[future]
-            try:
-                rotated_frames[idx] = future.result()
-            except Exception as exc:
-                print(f"Frame {idx} generated an exception during rotation: {exc}")
-    return np.array(rotated_frames)
-
-
-# -----------------------------
-# Masking and Binarization Pipeline
-# -----------------------------
-'''
-def mask_frame(i, video, chamber_mask_bool):
-    return video[i] * chamber_mask_bool
-
-
-def mask_video(video: np.ndarray, chamber_mask: np.ndarray):
-    num_frames, height, width = video.shape
-    masked_video = np.zeros_like(video)
-    # Ensure chamber_mask is boolean
-    chamber_mask_bool = chamber_mask if chamber_mask.dtype == bool else (chamber_mask > 0)
-    
-    # Use executor.map with the top-level mask_frame function.
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        # Pass video and chamber_mask_bool as iterables by repeating them for each frame.
-        results = list(executor.map(mask_frame, range(num_frames), [video]*num_frames, [chamber_mask_bool]*num_frames))
-    
-    for i, frame in enumerate(results):
-        masked_video[i] = frame
-        
-    return masked_video
-'''
-def mask_video(video: np.ndarray, chamber_mask: np.ndarray) -> np.ndarray:
-    # Ensure chamber_mask is boolean.
-    chamber_mask_bool = chamber_mask if chamber_mask.dtype == bool else (chamber_mask > 0)
-    # Use broadcasting: multiplies each frame elementwise with the mask.
-    return video * chamber_mask_bool
-
-
-# -----------------------------
-# Global Threshold Binarization
-# -----------------------------
-''''
-'def binarize_video_global_threshold(video, method='otsu', thresh_val=None):
-    if method == 'otsu':
-        threshold = threshold_otsu(video)
-    elif method == 'fixed':
-        if thresh_val is None:
-            raise ValueError("Provide a threshold value for 'fixed' method.")
-        threshold = thresh_val
-    else:
-        raise ValueError("Invalid method. Use 'otsu' or 'fixed'.")
-    binary_video = (video >= threshold).astype(np.uint8) * 255
-    return binary_video
-'''
-
-def binarize_video_global_threshold(video, method='otsu', thresh_val=None):
-    if method == 'otsu':
-        # Compute threshold over the whole video (flattened)
-        threshold = threshold_otsu(video)
-    elif method == 'fixed':
-        if thresh_val is None:
-            raise ValueError("Provide a threshold value for 'fixed' method.")
-        threshold = thresh_val
-    else:
-        raise ValueError("Invalid method. Use 'otsu' or 'fixed'.")
-    
-    # Broadcasting applies the comparison element-wise across the entire video array.
-    binary_video = (video >= threshold).astype(np.uint8) * 255
-    return binary_video

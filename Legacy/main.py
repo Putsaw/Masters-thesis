@@ -1,13 +1,12 @@
+from matplotlib import pyplot as plt
 from clustering import *
 from extrapolation import SprayConeBackfill, extrapolate_cone
-from functions import *
 from functions_videos import *
-from functions_optical_flow import *
-from boundary2 import *
+from Legacy.functions_optical_flow import *
 
 import opticalFlow as of
 import videoProcessingFunctions as vpf
-from std_functions3 import *
+from Legacy.std_functions3 import *
 import tkinter as tk
 from tkinter import filedialog
 

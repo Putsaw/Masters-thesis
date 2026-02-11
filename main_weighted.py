@@ -6,7 +6,7 @@ from data_capture import *
 import opticalFlow as of
 import videoProcessingFunctions as vpf
 import matplotlib.pyplot as plt
-from std_functions3 import *
+from Legacy.std_functions3 import *
 import tkinter as tk
 from tkinter import filedialog
 import json
@@ -21,7 +21,6 @@ import os
     # Handle multi file processing better, maybe with a progress bar or batch processing mode?
         # nozzle selection process
         # Combining data
-    # Add video saving
     # Add cone angle display to overlay video
     # Add more metrics to output CSV (spray area, tip velocity, nozzle opening/closing time, etc)
 

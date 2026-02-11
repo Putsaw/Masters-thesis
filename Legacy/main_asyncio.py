@@ -2,7 +2,6 @@ import asyncio
 from pathlib import Path
 import cv2
 import numpy as np
-from functions import *
 import matplotlib.pyplot as plt
 
 async def load_video_async(file):
