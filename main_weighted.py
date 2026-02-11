@@ -85,63 +85,28 @@ for file in all_files:
     ##############################
     # Freehand Mask Creation
     ##############################
-    drawing = False
-    points = []
 
-    def draw_mask(event, x, y, flags, param):
-        global drawing, points, mask
-
-        if event == cv2.EVENT_LBUTTONDOWN:
-            drawing = True
-            points = [(x, y)]
-
-        elif event == cv2.EVENT_MOUSEMOVE and drawing:
-            points.append((x, y))
-            cv2.line(mask, points[-2], points[-1], 255, thickness=2)
-
-        elif event == cv2.EVENT_LBUTTONUP:
-            drawing = False
-
-            if len(points) > 2:
-                contour = np.array(points, dtype=np.int32)
-                cv2.fillPoly(mask, [contour], 255)
-
-            points = []
-
-    frame = video_strip[nframes // 2]
-
-    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-
-    cv2.namedWindow("Draw Mask")
-    cv2.setMouseCallback("Draw Mask", draw_mask)
-
-    while True:
-        # Ensure overlay is 3-channel BGR (frame may be grayscale)
-        if frame.ndim == 2 or (frame.ndim == 3 and frame.shape[2] == 1):
-            overlay = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        else:
-            overlay = frame.copy()
-
-        # Apply red overlay safely (works even if mask has no 255 pixels)
-        mask_bool3 = (mask == 255)[:, :, None]
-        overlay = np.where(mask_bool3, np.array([0, 0, 255], dtype=overlay.dtype), overlay)
-
-        cv2.imshow("Draw Mask", overlay)
-
-        key = cv2.waitKey(40) & 0xFF
-        if key == ord('q'):
-            break
-        elif key == ord('r'):  # reset mask
-            mask[:] = 0
-
-    cv2.destroyAllWindows()
-    cv2.imwrite("mask.png", mask)
-
+    draw_freehand_mask(video_strip) # Allows user to draw a freehand mask on the video strip, saves as "mask.png" for later use in the combined score. 
+    # User can draw multiple separate regions if needed, just make sure to connect them with a line so they are included in the same cluster. 
+    # Press and hold left mouse button to draw, release to stop drawing, press 'q' to finish and save mask.
 
     ##############################
     # Filter Visualization
     ###############################
+
+    # video_strip2 = video_strip.copy()  # avoid modifying original rotated video for other processing
     video_strip = vpf.applyCLAHE(video_strip)
+
+    # for i in range(nframes):
+    #     cv2.imshow("CLAHE Video Strip", video_strip[i]) # Display CLAHE result for verification, press any key to continue
+    #     cv2.imshow("Original Video Strip", video_strip2[i]) # Display original result for verification, press any key to continue
+    #     key = cv2.waitKey(30) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows()
+
 
     background_mask = vpf.createBackgroundMask(first_frame, threshold=20) # Threshold to remove chamber walls
     cv2.imshow("Background Mask", background_mask) # Display background mask for verification, press any key to continue
@@ -353,7 +318,7 @@ for file in all_files:
         if np.count_nonzero(freehand) == 0:
             freehand = np.ones_like(freehand, dtype=np.float32)
 
-        # --- Combine: product (agreement) plus a small boost for single-strong signals ---
+        # --- Combine: product (agreement) ---
         comp_int = (intensity_n + eps) ** norm_intensity
         comp_motion = (mag_n + eps) ** norm_magnitude
         comp_free = (freehand + eps) ** norm_freehand
@@ -361,7 +326,7 @@ for file in all_files:
 
         # Assume components are already in [0,1]; combine as joint probability
         combined_score = comp_int * comp_motion * comp_free * comp_cone
-        # Optional: Normalize to [0,1] if needed
+        # Optional: Normalize to [0,1] 
         combined_score = combined_score / np.max(combined_score) if np.max(combined_score) > 0 else combined_score
 
         # Optional: map combined_score to 0..255 for diagnostics
@@ -379,7 +344,7 @@ for file in all_files:
             peak = combined_score.max()
             threshold_mask = (combined_score >= 0.8 * peak).astype(np.uint8) * 255
 
-        combined_score = cv2.GaussianBlur(combined_score, (5,5), 0)
+        combined_score = cv2.GaussianBlur(combined_score, (5,5), 0) # move before thresholding?
 
         # Exclude background areas
         threshold_mask[background_mask == 0] = 0
