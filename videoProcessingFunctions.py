@@ -394,3 +394,81 @@ def SVDfiltering(video, k=10):
     video_filtered = foreground.reshape(nframes, height, width)
 
     return video_filtered
+
+
+def tags_segmentation(spray_img, background_img, cell_size=5, n_bins=9, norm_order=1):
+    import cv2
+    import numpy as np
+    """
+    Implementation of the TAGS method for spray image segmentation.
+    
+    Args:
+        spray_img: The current spray image (grayscale).
+        background_img: The corresponding background image (grayscale).
+        cell_size: Dimension of the local cell (e.g., 3x3)[cite: 126].
+        n_bins: Number of orientation bins (Dimension N)[cite: 140].
+        norm_order: Norm order (p) for difference assessment (1 for L1, 2 for L2)[cite: 149].
+    """
+    
+    def get_gradient_statistics_vectors(img):
+        # 1. Gamma Correction (Square root) to enhance dark regions 
+        img_gamma = np.sqrt(img.astype(np.float32))
+        
+        # 2. Gradient Calculation (Gx and Gy) [cite: 134]
+        # Using simple subtraction as per Eq 1 and 2 in the study
+        gx = cv2.copyMakeBorder(img_gamma, 0, 0, 1, 1, cv2.BORDER_REPLICATE)
+        gx = gx[:, 2:] - gx[:, :-2]
+        
+        gy = cv2.copyMakeBorder(img_gamma, 1, 1, 0, 0, cv2.BORDER_REPLICATE)
+        gy = gy[2:, :] - gy[:-2, :]
+        
+        # 3. Polar Coordinate Conversion [cite: 134, 136]
+        magnitude, angle = cv2.cartToPolar(gx, gy, angleInDegrees=True)
+        
+        # 4. Orientation Statistics (Cell Partition & Histogram) [cite: 139, 142]
+        h, w = img.shape
+        half_cell = cell_size // 2
+        statistics_volume = np.zeros((h, w, n_bins), dtype=np.float32)
+        
+        # Define bin width (e.g., 40 degrees for 9 bins) [cite: 140]
+        bin_width = 360.0 / n_bins
+        
+        # Calculate histograms for each pixel's cell
+        for i in range(n_bins):
+            # Mask for current orientation bin [cite: 141]
+            lower = i * bin_width
+            upper = (i + 1) * bin_width
+            bin_mask = (angle >= lower) & (angle < upper)
+            bin_magnitude = np.where(bin_mask, magnitude, 0)
+            
+            # Sum magnitudes in the local cell [cite: 142]
+            # boxFilter effectively sums values in a cell_size window
+            statistics_volume[:, :, i] = cv2.boxFilter(bin_magnitude, -1, 
+                                                       (cell_size, cell_size), 
+                                                       normalize=False)
+
+        # 5. Normalization [cite: 143, 144]
+        sum_v = np.sum(statistics_volume, axis=2, keepdims=True)
+        # Avoid division by zero
+        vn = np.divide(statistics_volume, sum_v, 
+                       out=np.zeros_like(statistics_volume), 
+                       where=sum_v != 0)
+        return vn
+
+    # Calculate Normalized Gradient Statistics Vectors (Vn) for both images
+    vn_spray = get_gradient_statistics_vectors(spray_img)
+    vn_bg = get_gradient_statistics_vectors(background_img)
+
+    # 6. Difference Assessment (p-norm) [cite: 148, 149]
+    diff = np.abs(vn_spray - vn_bg)
+    if norm_order == 1:
+        diff_map = np.sum(diff, axis=2) # L1-norm [cite: 150, 151]
+    else:
+        diff_map = np.power(np.sum(np.power(diff, norm_order), axis=2), 1.0/norm_order)
+
+    # 7. Threshold Binarization using Otsu's Method [cite: 155, 157]
+    # Scale diff_map to 0-255 for OpenCV's Otsu
+    diff_map_8u = cv2.normalize(diff_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    _, binary_mask = cv2.threshold(diff_map_8u, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    return binary_mask, diff_map

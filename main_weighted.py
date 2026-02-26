@@ -82,6 +82,46 @@ for file in all_files:
 
     first_frame = video_strip[firstFrameNumber]
 
+
+    # TESTING
+    TAGS_segmentation = np.zeros_like(video_strip, dtype=np.uint8)
+    TAGS_segmentation_diff = np.zeros_like(video_strip, dtype=np.float32)
+
+    # Dynamic TAGS background update:
+    # 1) Start from the last frame before injection.
+    # 2) Segment current frame against current background.
+    # 3) Update background pixels only where current frame is classified as background.
+    bg_init_idx = max(0, firstFrameNumber-1)
+    tags_background = video_strip[bg_init_idx].copy()
+
+    background_mask_test = vpf.createBackgroundMask(first_frame, threshold=20)
+
+    for i in range(nframes):
+        current_frame = video_strip[i]
+        current_frame[background_mask_test == 0] = 0  # Apply background mask to current frame before segmentation
+
+        tags_mask, tags_diff = vpf.tags_segmentation(current_frame, tags_background)
+
+        TAGS_segmentation[i] = tags_mask
+        TAGS_segmentation_diff[i] = tags_diff
+
+        # Background class in binary mask is 0, foreground/spray is 255.
+        background_pixels = tags_mask == 0
+        tags_background[background_pixels] = current_frame[background_pixels]
+
+        cv2.imshow("TAGS Segmentation", TAGS_segmentation[i]) # Display rotated video strip for verification
+        tags_diff_vis = cv2.normalize(tags_diff, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        cv2.imshow("TAGS Segmentation Diff", tags_diff_vis) # Display rotated video strip for verification
+        cv2.imshow("Current Frame", current_frame) # Display current frame for verification
+
+        key = cv2.waitKey(30) & 0xFF
+        if key == ord('q'):
+            break
+        if key == ord('p'):
+            cv2.waitKey(-1)
+    cv2.destroyAllWindows()
+
+
     ##############################
     # Freehand Mask Creation
     ##############################
