@@ -1,11 +1,15 @@
 ################################
 # Removes background from a frame using the first frame as reference
 ################################
+from matplotlib import image
+
+
 def removeBackgroundSimple(video, first_frame, threshold=10):
     import cv2
     import numpy as np
 
     nframes = video.shape[0]
+    foreground_video = np.zeros_like(video)
 
     for i in range(nframes):
         frame = video[i]
@@ -19,9 +23,9 @@ def removeBackgroundSimple(video, first_frame, threshold=10):
         # Use the mask to extract the foreground from the original frame
         foreground = cv2.bitwise_and(frame, frame, mask=mask)
 
-        video[i] = foreground
+        foreground_video[i] = foreground
 
-    return video 
+    return foreground_video
 
 
 def createBackgroundMask(first_frame, threshold=10):
@@ -159,19 +163,26 @@ def applyLaplacianFilter(video):
 
     return video
 
-def applyDoGfilter(video, ksize1=5, ksize2=9):
-    import cv2
+def applyDoGfilter(video, low_sigma=1.0, high_sigma=2.0):
+    from skimage.filters import difference_of_gaussians
     import numpy as np
 
     nframes = video.shape[0]
 
     for i in range(nframes):
         frame = video[i]
-        blur1 = cv2.GaussianBlur(frame, (ksize1, ksize1), 0)
-        blur2 = cv2.GaussianBlur(frame, (ksize2, ksize2), 0)
-        dog = cv2.subtract(blur1, blur2)
-        dog = cv2.convertScaleAbs(dog)
-        video[i] = dog
+
+        # DoG output is float and can contain negative values; convert to displayable uint8.
+        dog = difference_of_gaussians(frame, low_sigma=low_sigma, high_sigma=high_sigma)
+        dog = np.abs(dog)
+
+        max_val = dog.max()
+        if max_val > 0:
+            dog = (dog / max_val) * 255.0
+        else:
+            dog = np.zeros_like(dog)
+
+        video[i] = dog.astype(np.uint8)
 
     return video
 
@@ -394,3 +405,15 @@ def SVDfiltering(video, k=10):
     video_filtered = foreground.reshape(nframes, height, width)
 
     return video_filtered
+
+def applyGaussianBlur(video, kernel_size=(5,5)):
+    import cv2
+    import numpy as np
+
+    nframes = video.shape[0]
+    for i in range(nframes):
+        frame = video[i]
+        frame_blur = cv2.GaussianBlur(frame, kernel_size, 0)
+        video[i] = frame_blur
+
+    return video

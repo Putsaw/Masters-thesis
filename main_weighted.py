@@ -3,6 +3,7 @@ from clustering import *
 from functions_videos import load_cine_video
 from data_capture import *
 
+from histogram import *
 import opticalFlow as of
 import videoProcessingFunctions as vpf
 import matplotlib.pyplot as plt
@@ -65,7 +66,7 @@ for file in all_files:
     ##############################
     # Video Rotation and Stripping
     ##############################
-    rotation_angle = 60  # degrees clockwise, adjust as needed
+    rotation_angle = 45  # degrees clockwise, adjust as needed
     rotated_video = vpf.createRotatedVideo(video, rotation_angle) # Rotate 60 degrees clockwise
     firstFrameNumber = vpf.findFirstFrame(rotated_video, threshold=10) # Find first frame with intensity above threshold
 
@@ -86,7 +87,7 @@ for file in all_files:
     # Freehand Mask Creation
     ##############################
 
-    draw_freehand_mask(video_strip) # Allows user to draw a freehand mask on the video strip, saves as "mask.png" for later use in the combined score. 
+    # draw_freehand_mask(video_strip) # Allows user to draw a freehand mask on the video strip, saves as "mask.png" for later use in the combined score. 
     # User can draw multiple separate regions if needed, just make sure to connect them with a line so they are included in the same cluster. 
     # Press and hold left mouse button to draw, release to stop drawing, press 'q' to finish and save mask.
 
@@ -94,8 +95,9 @@ for file in all_files:
     # Filter Visualization
     ###############################
 
-    # video_strip2 = video_strip.copy()  # avoid modifying original rotated video for other processing
-    video_strip = vpf.applyCLAHE(video_strip)
+    video_strip2 = video_strip.copy()  # avoid modifying original rotated video for other processing
+    #video_strip = vpf.applyCLAHE(video_strip)
+
 
     # for i in range(nframes):
     #     cv2.imshow("CLAHE Video Strip", video_strip[i]) # Display CLAHE result for verification, press any key to continue
@@ -106,6 +108,95 @@ for file in all_files:
     #     if key == ord('p'):
     #         cv2.waitKey(-1)
     # cv2.destroyAllWindows()
+
+    # video_strip = vpf.applyDoGfilter(video_strip) # Apply DoG filter to reduce noise before optical flow
+
+    # for i in range(nframes):
+    #     cv2.imshow("DoG Video Strip", video_strip[i]) # Display DoG result for verification, press any key to continue
+    #     cv2.imshow("Original Video Strip", video_strip2[i]) # Display original result for verification, press any key to continue
+    #     key = cv2.waitKey(30) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+
+    # analyze_histogram_statistics(video_strip, firstFrameNumber)
+    # display_histogram_animation(video_strip, firstFrameNumber, last_frame=None, delay=50)
+
+    # plot_frame_histogram(video_strip[150], frame_number=150)
+
+
+    # video_strip = vpf.applyGaussianBlur(video_strip, kernel_size=(5,5)) # Apply Gaussian blur to reduce noise before optical flow
+
+    # for i in range(nframes):
+    #     cv2.imshow("Gaussian Blur Video Strip", video_strip[i])
+    #     cv2.imshow("Original Video Strip", video_strip2[i])
+    #     key = cv2.waitKey(30) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+
+
+    video_strip = vpf.removeBackgroundSimple(video_strip, first_frame, threshold=20)
+
+    for i in range(nframes):
+        cv2.imshow("Simple Background Subtraction Video Strip", video_strip[i])
+        cv2.imshow("Original Video Strip", video_strip2[i])
+        key = cv2.waitKey(30) & 0xFF
+        if key == ord('q'):
+            break
+        if key == ord('p'):
+            cv2.waitKey(-1)
+
+    
+
+
+    framenum = 200
+    frame = video_strip[framenum]
+    plot_frame_histogram(frame, frame_number=framenum)
+
+    plot_fft_frequency_image(frame, frame_number=framenum)
+
+    # Render matplotlib histogram to a numpy array
+    hist_image = render_histogram_to_array(frame, frame_number=framenum)
+
+    # Resize frame to match histogram height for side-by-side display
+    h_hist, w_hist = hist_image.shape[:2]
+    frame_resized = cv2.resize(frame, (w_hist, h_hist))
+    if frame_resized.ndim == 2:
+        frame_resized = cv2.cvtColor(frame_resized, cv2.COLOR_GRAY2BGR)
+
+    # Stack horizontally: raw frame on left, matplotlib histogram on right
+    combined = np.hstack([frame_resized, hist_image])
+    cv2.imshow("Frame + Histogram", combined)
+    cv2.waitKey(0)
+
+
+
+    # for i in range(nframes):
+    #     frame = video_strip[i]
+
+    #     # Render matplotlib histogram to a numpy array
+    #     hist_image = render_histogram_to_array(frame, frame_number=i)
+
+    #     # Resize frame to match histogram height for side-by-side display
+    #     h_hist, w_hist = hist_image.shape[:2]
+    #     frame_resized = cv2.resize(frame, (w_hist, h_hist))
+    #     if frame_resized.ndim == 2:
+    #         frame_resized = cv2.cvtColor(frame_resized, cv2.COLOR_GRAY2BGR)
+
+    #     # Stack horizontally: raw frame on left, matplotlib histogram on right
+    #     combined = np.hstack([frame_resized, hist_image])
+    #     cv2.imshow("Frame + Histogram", combined)
+
+    #     key = cv2.waitKey(30) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+
+    break
 
 
     background_mask = vpf.createBackgroundMask(first_frame, threshold=20) # Threshold to remove chamber walls
@@ -150,6 +241,9 @@ for file in all_files:
     #           Reconsider high motion detection method:
     #
     #           Cone mask is broken for HPH2, needs adjustment.
+    #
+    #           Intensity mask sets corners to 1 due to low intensity, but those are not part of the spray. Maybe add a mask to remove corners.
+    #              This limits the extraction of the spray.
 
 
     # maybe if magnitude is close to zero then intensity should have more weight? not sure how to implement that nicely though.
