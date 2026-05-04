@@ -66,7 +66,7 @@ for file in all_files:
     ##############################
     # Video Rotation and Stripping
     ##############################
-    rotation_angle = 45  # degrees clockwise, adjust as needed
+    rotation_angle = 60  # degrees clockwise, adjust as needed
     rotated_video = vpf.createRotatedVideo(video, rotation_angle) # Rotate 60 degrees clockwise
     firstFrameNumber = vpf.findFirstFrame(rotated_video, threshold=10) # Find first frame with intensity above threshold
 
@@ -84,44 +84,55 @@ for file in all_files:
     first_frame = video_strip[firstFrameNumber]
 
 
-    # TESTING
-    TAGS_segmentation = np.zeros_like(video_strip, dtype=np.uint8)
-    TAGS_segmentation_diff = np.zeros_like(video_strip, dtype=np.float32)
+    # # TESTING
+    # TAGS_segmentation = np.zeros_like(video_strip, dtype=np.uint8)
+    # TAGS_segmentation_diff = np.zeros_like(video_strip, dtype=np.float32)
 
-    # Dynamic TAGS background update:
-    # 1) Start from the last frame before injection.
-    # 2) Segment current frame against current background.
-    # 3) Update background pixels only where current frame is classified as background.
-    bg_init_idx = max(0, firstFrameNumber-1)
-    tags_background = video_strip[bg_init_idx].copy()
+    # # Dynamic TAGS background update:
+    # # 1) Start from the last frame before injection.
+    # # 2) Segment current frame against current background.
+    # # 3) Update background pixels only where current frame is classified as background.
+    # bg_init_idx = max(0, firstFrameNumber-1)
+    # tags_background = video_strip[bg_init_idx].copy()
 
-    background_mask_test = vpf.createBackgroundMask(first_frame, threshold=20)
+    # background_mask_test = vpf.createBackgroundMask(first_frame, threshold=20)
 
-    for i in range(nframes):
-        current_frame = video_strip[i]
-        current_frame[background_mask_test == 0] = 0  # Apply background mask to current frame before segmentation
+    # for i in range(nframes):
+    #     current_frame = video_strip[i]
+    #     current_frame[background_mask_test == 0] = 0  # Apply background mask to current frame before segmentation
 
-        tags_mask, tags_diff = vpf.tags_segmentation(current_frame, tags_background)
+    #     tags_mask, tags_diff = vpf.tags_segmentation(current_frame, tags_background)
 
-        TAGS_segmentation[i] = tags_mask
-        TAGS_segmentation_diff[i] = tags_diff
+    #     TAGS_segmentation[i] = tags_mask
+    #     TAGS_segmentation_diff[i] = tags_diff
 
-        # Background class in binary mask is 0, foreground/spray is 255.
-        background_pixels = tags_mask == 0
-        tags_background[background_pixels] = current_frame[background_pixels]
+    #     # Background class in binary mask is 0, foreground/spray is 255.
+    #     background_pixels = tags_mask == 0
+    #     tags_background[background_pixels] = current_frame[background_pixels]
 
-        cv2.imshow("TAGS Segmentation", TAGS_segmentation[i]) # Display rotated video strip for verification
-        tags_diff_vis = cv2.normalize(tags_diff, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        cv2.imshow("TAGS Segmentation Diff", tags_diff_vis) # Display rotated video strip for verification
-        cv2.imshow("Current Frame", current_frame) # Display current frame for verification
+    #     cv2.imshow("TAGS Segmentation", TAGS_segmentation[i]) # Display rotated video strip for verification
+    #     tags_diff_vis = cv2.normalize(tags_diff, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    #     cv2.imshow("TAGS Segmentation Diff", tags_diff_vis) # Display rotated video strip for verification
+    #     cv2.imshow("Current Frame", current_frame) # Display current frame for verification
 
-        key = cv2.waitKey(30) & 0xFF
-        if key == ord('q'):
-            break
-        if key == ord('p'):
-            cv2.waitKey(-1)
-    cv2.destroyAllWindows()
+    #     key = cv2.waitKey(30) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows()
+    video_strip2 = video_strip.copy()  # avoid modifying original rotated video for other processing
 
+    # video_strip = vpf.localThreshold(video_strip, blockSize=61, C=2) # Apply local thresholding to enhance contrast, may help with intensity-based detection, can be turned off if not helpful
+    # for i in range(nframes):
+    #     cv2.imshow("Local Thresholding Video Strip", video_strip[i]) # Display local thresholding result for verification, press any key to continue
+    #     cv2.imshow("Original Video Strip", video_strip2[i]) # Display original result for verification, press any key to continue
+    #     key = cv2.waitKey(30) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+    # cv2.destroyAllWindows()
 
     ##############################
     # Freehand Mask Creation
@@ -135,10 +146,34 @@ for file in all_files:
     # Filter Visualization
     ###############################
 
-    video_strip2 = video_strip.copy()  # avoid modifying original rotated video for other processing
-    #video_strip = vpf.applyCLAHE(video_strip)
+    
+    video_strip = vpf.applyCLAHE(video_strip)
 
+    deepflow = cv2.optflow.createOptFlow_DeepFlow() # type: ignore, requires opencv-contrib-python
 
+    for i in range(1, nframes):
+        flow = of.opticalFlowFarnebackCalculation(video_strip[i-1], video_strip[i]) # Just to test the function and visualize the result, press any key to continue
+        flow_deep = of.opticalFlowDeepFlowCalculation(video_strip[i-1], video_strip[i], deepflow) # Just to test the function and visualize the result, press any key to continue
+
+        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+        mag_deep, ang_deep = cv2.cartToPolar(flow_deep[..., 0], flow_deep[..., 1])
+
+        mag_vis = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        mag_deep_vis = cv2.normalize(mag_deep, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        ang_vis = (ang * 180 / np.pi / 2).astype(np.uint8) # Convert angle to [0,255] for visualization
+        ang_deep_vis = (ang_deep * 180 / np.pi / 2).astype(np.uint8) # Convert angle to [0,255] for visualization
+        cv2.imshow("Optical Flow Magnitude", mag_vis)
+        cv2.imshow("Optical Flow Angle", ang_vis)
+        cv2.imshow("Optical Flow Deep Magnitude", mag_deep_vis)
+        cv2.imshow("Optical Flow Deep Angle", ang_deep_vis)
+        key = cv2.waitKey(30) & 0xFF
+        if key == ord('q'):
+            break
+        if key == ord('p'):
+            cv2.waitKey(-1)
+        
+    break
     # for i in range(nframes):
     #     cv2.imshow("CLAHE Video Strip", video_strip[i]) # Display CLAHE result for verification, press any key to continue
     #     cv2.imshow("Original Video Strip", video_strip2[i]) # Display original result for verification, press any key to continue
@@ -178,39 +213,39 @@ for file in all_files:
     #         cv2.waitKey(-1)
 
 
-    video_strip = vpf.removeBackgroundSimple(video_strip, first_frame, threshold=20)
+    # video_strip = vpf.removeBackgroundSimple(video_strip, first_frame, threshold=20)
 
-    for i in range(nframes):
-        cv2.imshow("Simple Background Subtraction Video Strip", video_strip[i])
-        cv2.imshow("Original Video Strip", video_strip2[i])
-        key = cv2.waitKey(30) & 0xFF
-        if key == ord('q'):
-            break
-        if key == ord('p'):
-            cv2.waitKey(-1)
+    # for i in range(nframes):
+    #     cv2.imshow("Simple Background Subtraction Video Strip", video_strip[i])
+    #     cv2.imshow("Original Video Strip", video_strip2[i])
+    #     key = cv2.waitKey(30) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
 
     
 
 
-    framenum = 200
-    frame = video_strip[framenum]
-    plot_frame_histogram(frame, frame_number=framenum)
+    # framenum = 200
+    # frame = video_strip[framenum]
+    # plot_frame_histogram(frame, frame_number=framenum)
 
-    plot_fft_frequency_image(frame, frame_number=framenum)
+    # plot_fft_frequency_image(frame, frame_number=framenum)
 
-    # Render matplotlib histogram to a numpy array
-    hist_image = render_histogram_to_array(frame, frame_number=framenum)
+    # # Render matplotlib histogram to a numpy array
+    # hist_image = render_histogram_to_array(frame, frame_number=framenum)
 
-    # Resize frame to match histogram height for side-by-side display
-    h_hist, w_hist = hist_image.shape[:2]
-    frame_resized = cv2.resize(frame, (w_hist, h_hist))
-    if frame_resized.ndim == 2:
-        frame_resized = cv2.cvtColor(frame_resized, cv2.COLOR_GRAY2BGR)
+    # # Resize frame to match histogram height for side-by-side display
+    # h_hist, w_hist = hist_image.shape[:2]
+    # frame_resized = cv2.resize(frame, (w_hist, h_hist))
+    # if frame_resized.ndim == 2:
+    #     frame_resized = cv2.cvtColor(frame_resized, cv2.COLOR_GRAY2BGR)
 
-    # Stack horizontally: raw frame on left, matplotlib histogram on right
-    combined = np.hstack([frame_resized, hist_image])
-    cv2.imshow("Frame + Histogram", combined)
-    cv2.waitKey(0)
+    # # Stack horizontally: raw frame on left, matplotlib histogram on right
+    # combined = np.hstack([frame_resized, hist_image])
+    # cv2.imshow("Frame + Histogram", combined)
+    # cv2.waitKey(0)
 
 
 
@@ -236,7 +271,7 @@ for file in all_files:
     #     if key == ord('p'):
     #         cv2.waitKey(-1)
 
-    break
+    # break
 
 
     background_mask = vpf.createBackgroundMask(first_frame, threshold=20) # Threshold to remove chamber walls
@@ -502,9 +537,10 @@ for file in all_files:
             final_cluster_masks[idx] = final_mask
         else:
             # --- Clustering to get final clean outline ---
+            # CURRENTLY BUGGED, small cluster distance makes cluster way too small. Does not detect properly. 
             # Cluster distance determines how close points have to be to be considered part of the same cluster, higher = larger clusters
             # Alpha determines concaveness of the hull, higher = more convex, infinity would be full convex, lower = more concave, too low = holes
-            final_mask = create_cluster_mask(threshold_mask, cluster_distance=40, alpha=30) 
+            final_mask = create_cluster_mask(threshold_mask, cluster_distance=20, alpha=30) 
             final_cluster_masks[idx] = final_mask
 
         # Store only after motion is detected near the spray origin (latched)
@@ -547,7 +583,6 @@ for file in all_files:
     output_video = os.path.join(results_dir, f"{output_base}_overlay.mp4")
 
     # Show combined masks (press 'q' to quit, 'p' to pause)
-    intensity_values = [] # store average intensities
     video_writer = None
     video_fps = 30
     for i in range(nframes):
@@ -571,10 +606,6 @@ for file in all_files:
         y2 = int(np.clip(tip_y + tip_half_len, 0, height - 1))
         cv2.line(overlay, (tip_x, y1), (tip_x, y2), (0, 255, 255), 3)
         cv2.circle(overlay, (int(origin_x), int(origin_y)), 4, (0, 0, 255), -1) 
-
-        # Compute mean intensity inside the mask
-        mean_intensity = cv2.mean(frame, combined)
-        intensity_values.append(mean_intensity)
 
         # Resize all images to the same size for stacking (e.g., 640x320)
         def resize(img, size=(640, 320)):
@@ -644,23 +675,39 @@ for file in all_files:
     if video_writer is not None:
         video_writer.release()
 
-    """
+    # --- Manual validation on a representative frame ---
+    compare_frame_idx = min(200, nframes - 1)
+    validation_metrics, _ = draw_and_compare_mask_frames(
+        video_strip2,
+        final_cluster_masks,
+        start_frame=compare_frame_idx,
+        save_prefix=output_base,
+    )
+    print(f"Validation metrics (final selected frame {validation_metrics['frame_index']}):")
+    for k, v in validation_metrics.items():
+        if isinstance(v, float):
+            print(f"  {k}: {v:.4f}")
+        else:
+            print(f"  {k}: {v}")
+
     # --- Analyze intensity values ---
     # Needs more work, maybe diffent method to find significant changes
+    intensity_values = np.zeros(nframes, dtype=np.float32)
+    for i in range(nframes):
+        masked_pixels = video_strip[i][combined_masks[i] > 0]
+        intensity_values[i] = float(masked_pixels.mean()) if masked_pixels.size > 0 else 0.0
 
-    # calculate derivative of intensity values
-    intensity_values = np.array(intensity_values)   [:,0]  # Extract first channel if mean returns a tuple
-    
-    # Apply rolling mean with window size 5
+    # Keep smoothed intensity aligned to the per-frame metrics for plotting/export.
     window_size = 5
-    intensity_smoothed = np.convolve(intensity_values, np.ones(window_size)/window_size, mode='valid')
-    
-    # Compute derivative on smoothed data
-    intensity_derivative = np.diff(intensity_smoothed, prepend=intensity_smoothed[0])
+    if intensity_values.size == 0:
+        intensity_smoothed = np.zeros(0, dtype=np.float32)
+        intensity_derivative = np.zeros(0, dtype=np.float32)
+    else:
+        smoothing_kernel = np.ones(window_size, dtype=np.float32) / window_size
+        intensity_smoothed = np.convolve(intensity_values, smoothing_kernel, mode='same')
+        intensity_derivative = np.diff(intensity_smoothed, prepend=intensity_smoothed[0])
 
-    # --- Create shifted x-axis ---
-    # Adjust frame_numbers to match the length after rolling mean
-    frame_numbers = np.arange(firstFrameNumber, firstFrameNumber + len(intensity_derivative))
+    frame_numbers = np.arange(nframes)
 
     # only consider frames at least 10 after firstFrameNumber
     start_offset = 10
@@ -676,15 +723,9 @@ for file in all_files:
     min_value = float(intensity_derivative[min_idx])
     print(f"Lowest intensity derivative at frame {min_frame} (index {min_idx}) = {min_value:.6f}")
 
-    plt.plot(frame_numbers, intensity_derivative)
-    plt.xlabel("Frame Number")
-    plt.ylabel("Mean Intensity Inside Region")
-    plt.title("Intensity Over Time (Shifted)")
-    plt.show()
-    """
     # --- Plot all CSV metrics in a grid ---
     frames = np.arange(nframes)
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8), sharex=True)
+    fig, axes = plt.subplots(2, 4, figsize=(18, 8), sharex=True)
 
     axes[0, 0].plot(frames, penetration)
     axes[0, 0].set_title("Penetration")
@@ -708,8 +749,21 @@ for file in all_files:
     axes[1, 1].set_ylabel("Pixels$^2$")
     axes[1, 1].set_xlabel("Frame Number")
 
-    # Hide unused subplot (2x3 grid but only 5 metrics)
-    axes[1, 2].axis("off")
+    axes[1, 2].plot(frames, intensity_values, label="Mean")
+    axes[1, 2].plot(frames, intensity_smoothed, label="Smoothed", linewidth=2)
+    axes[1, 2].set_title("Mean Intensity")
+    axes[1, 2].set_ylabel("Gray Value")
+    axes[1, 2].set_xlabel("Frame Number")
+    axes[1, 2].legend()
+
+    axes[1, 3].plot(frames, intensity_derivative)
+    axes[1, 3].axvline(min_frame, color='r', linestyle='--', linewidth=1)
+    axes[1, 3].set_title("Intensity Derivative")
+    axes[1, 3].set_ylabel("Gray Value / Frame")
+    axes[1, 3].set_xlabel("Frame Number")
+
+    # Hide unused subplot (2x4 grid but only 7 metrics)
+    axes[0, 3].axis("off")
 
     fig.suptitle("Spray Metrics Over Time")
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])  # type: ignore
@@ -717,9 +771,9 @@ for file in all_files:
 
     # Generate output CSV in a local Results folder
     with open(output_csv, 'w') as f:
-        f.write("Frame,Penetration (pixels), Cone Angle (degrees), Regularized Cone Angle (degrees), Close Point Distance (pixels), Spray Area (pixels^2)\n")
+        f.write("Frame,Penetration (pixels), Cone Angle (degrees), Regularized Cone Angle (degrees), Close Point Distance (pixels), Spray Area (pixels^2), Mean Intensity, Smoothed Mean Intensity, Intensity Derivative\n")
         for i in range(nframes):
-            f.write(f"{i},{penetration[i]},{cone_angle[i]},{cone_angle_reg[i]},{close_point_distance[i]},{spray_area[i]}\n")
+            f.write(f"{i},{penetration[i]},{cone_angle[i]},{cone_angle_reg[i]},{close_point_distance[i]},{spray_area[i]},{intensity_values[i]},{intensity_smoothed[i]},{intensity_derivative[i]}\n")
 
 
 print("Processing complete.")

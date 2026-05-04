@@ -417,3 +417,78 @@ def applyGaussianBlur(video, kernel_size=(5,5)):
         video[i] = frame_blur
 
     return video
+
+def triangleThresholding(video, corner_crop_fraction=0.15):
+    import cv2
+    import numpy as np
+
+    out = video.copy()
+    nframes = video.shape[0]
+
+    # Clamp crop ratio to keep a valid central ROI.
+    crop = float(np.clip(corner_crop_fraction, 0.0, 0.49))
+
+    for i in range(nframes):
+        frame = video[i]
+
+        # Triangle thresholding expects 8-bit single-channel input.
+        if frame.dtype != np.uint8:
+            frame_for_thresh = np.clip(frame, 0, 255).astype(np.uint8)
+        else:
+            frame_for_thresh = frame
+
+        h, w = frame_for_thresh.shape[:2]
+        y0 = int(h * crop)
+        y1 = h - y0
+        x0 = int(w * crop)
+        x1 = w - x0
+
+        # Compute triangle threshold from center region to avoid dark corner bias.
+        roi = frame_for_thresh[y0:y1, x0:x1]
+        if roi.size == 0:
+            roi = frame_for_thresh
+
+        triangle_value, _ = cv2.threshold(
+            roi,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE,
+        )
+
+        _, thresh_frame = cv2.threshold(
+            frame_for_thresh,
+            triangle_value,
+            255,
+            cv2.THRESH_BINARY,
+        )
+
+        out[i] = thresh_frame
+
+    return out
+
+def applyGlobalThreshold(video, threshold=127):
+    import cv2
+    import numpy as np
+
+    nframes = video.shape[0]
+
+    for i in range(nframes):
+        frame = video[i]
+        _, thresh_frame = cv2.threshold(frame, threshold, 255, cv2.THRESH_BINARY)
+        video[i] = thresh_frame
+
+    return video
+
+def localThreshold(video, blockSize=11, C=2):
+    import cv2
+    import numpy as np
+
+    nframes = video.shape[0]
+
+    for i in range(nframes):
+        frame = video[i]
+        thresh_frame = cv2.adaptiveThreshold(frame, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                             cv2.THRESH_BINARY, blockSize, C)
+        video[i] = thresh_frame
+
+    return video
