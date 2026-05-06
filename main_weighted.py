@@ -149,31 +149,30 @@ for file in all_files:
     
     video_strip = vpf.applyCLAHE(video_strip)
 
-    deepflow = cv2.optflow.createOptFlow_DeepFlow() # type: ignore, requires opencv-contrib-python
+    # deepflow = cv2.optflow.createOptFlow_DeepFlow() # type: ignore, requires opencv-contrib-python
 
-    for i in range(1, nframes):
-        flow = of.opticalFlowFarnebackCalculation(video_strip[i-1], video_strip[i]) # Just to test the function and visualize the result, press any key to continue
-        flow_deep = of.opticalFlowDeepFlowCalculation(video_strip[i-1], video_strip[i], deepflow) # Just to test the function and visualize the result, press any key to continue
+    # for i in range(1, nframes):
+    #     flow = of.opticalFlowFarnebackCalculation(video_strip[i-1], video_strip[i]) # Just to test the function and visualize the result, press any key to continue
+    #     flow_deep = of.opticalFlowDeepFlowCalculation(video_strip[i-1], video_strip[i], deepflow) # Just to test the function and visualize the result, press any key to continue
 
-        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-        mag_deep, ang_deep = cv2.cartToPolar(flow_deep[..., 0], flow_deep[..., 1])
+    #     mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+    #     mag_deep, ang_deep = cv2.cartToPolar(flow_deep[..., 0], flow_deep[..., 1])
 
-        mag_vis = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        mag_deep_vis = cv2.normalize(mag_deep, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    #     mag_vis = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    #     mag_deep_vis = cv2.normalize(mag_deep, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
-        ang_vis = (ang * 180 / np.pi / 2).astype(np.uint8) # Convert angle to [0,255] for visualization
-        ang_deep_vis = (ang_deep * 180 / np.pi / 2).astype(np.uint8) # Convert angle to [0,255] for visualization
-        cv2.imshow("Optical Flow Magnitude", mag_vis)
-        cv2.imshow("Optical Flow Angle", ang_vis)
-        cv2.imshow("Optical Flow Deep Magnitude", mag_deep_vis)
-        cv2.imshow("Optical Flow Deep Angle", ang_deep_vis)
-        key = cv2.waitKey(30) & 0xFF
-        if key == ord('q'):
-            break
-        if key == ord('p'):
-            cv2.waitKey(-1)
-        
-    break
+    #     ang_vis = (ang * 180 / np.pi / 2).astype(np.uint8) # Convert angle to [0,255] for visualization
+    #     ang_deep_vis = (ang_deep * 180 / np.pi / 2).astype(np.uint8) # Convert angle to [0,255] for visualization
+    #     cv2.imshow("Optical Flow Magnitude", mag_vis)
+    #     cv2.imshow("Optical Flow Angle", ang_vis)
+    #     cv2.imshow("Optical Flow Deep Magnitude", mag_deep_vis)
+    #     cv2.imshow("Optical Flow Deep Angle", ang_deep_vis)
+    #     key = cv2.waitKey(30) & 0xFF
+    #     if key == ord('q'):
+    #         break
+    #     if key == ord('p'):
+    #         cv2.waitKey(-1)
+
     # for i in range(nframes):
     #     cv2.imshow("CLAHE Video Strip", video_strip[i]) # Display CLAHE result for verification, press any key to continue
     #     cv2.imshow("Original Video Strip", video_strip2[i]) # Display original result for verification, press any key to continue
@@ -487,16 +486,60 @@ for file in all_files:
         if np.count_nonzero(freehand) == 0:
             freehand = np.ones_like(freehand, dtype=np.float32)
 
-        # --- Combine: product (agreement) ---
-        comp_int = (intensity_n + eps) ** norm_intensity
-        comp_motion = (mag_n + eps) ** norm_magnitude
-        comp_free = (freehand + eps) ** norm_freehand
-        comp_cone = (cone + eps) ** norm_cone
+        if True:
+            # --- Combine: product (agreement) ---
+            comp_int = (intensity_n + eps) ** norm_intensity
+            comp_motion = (mag_n + eps) ** norm_magnitude
+            comp_free = (freehand + eps) ** norm_freehand
+            comp_cone = (cone + eps) ** norm_cone
 
-        # Assume components are already in [0,1]; combine as joint probability
-        combined_score = comp_int * comp_motion * comp_free * comp_cone
-        # Optional: Normalize to [0,1] 
-        combined_score = combined_score / np.max(combined_score) if np.max(combined_score) > 0 else combined_score
+            # Assume components are already in [0,1]; combine as joint probability
+            combined_score = comp_int * comp_motion * comp_free * comp_cone
+            # Optional: Normalize to [0,1] 
+            combined_score = combined_score / np.max(combined_score) if np.max(combined_score) > 0 else combined_score
+
+        else:
+        ###############
+            # --- Combine: Soft Bayesian fusion via weighted log-odds (logit) ---
+            # Convert component probabilities to log-odds, weight them, then map back with sigmoid.
+            # This implements a soft Bayesian fusion where weights act on evidence in log-space
+            # instead of multiplying probabilities (which can be dominated by near-zero terms).
+            
+            def _logit(p):
+                # stable logit with small eps to avoid division by zero / log(0)
+                return np.log((p + eps) / (1.0 - p + eps))
+            
+            def _sigmoid(x):
+                return 1.0 / (1.0 + np.exp(-x))
+            
+            # Compute log-odds for each component (safe with eps)
+            logit_int    = _logit(intensity_n)
+            logit_motion = _logit(mag_n)
+            logit_free   = _logit(freehand)
+            logit_cone   = _logit(cone)
+            
+            # Weighted sum of log-odds using normalized weights
+            L = (norm_intensity * logit_int
+                + norm_magnitude * logit_motion
+                + norm_freehand * logit_free
+                + norm_cone * logit_cone)
+            
+            # Optional temperature parameter to control sharpness (1.0 = default)
+            temperature = 1.0
+            combined_score = _sigmoid(L / temperature)
+            
+            # Safety: ensure result in [0,1]
+            combined_score = np.clip(combined_score, 0.0, 1.0)
+            
+            # For reference: previous multiplicative (product) scheme (commented)
+            # comp_int = (intensity_n + eps) ** norm_intensity
+            # comp_motion = (mag_n + eps) ** norm_magnitude
+            # comp_free = (freehand + eps) ** norm_freehand
+            # comp_cone = (cone + eps) ** norm_cone
+            # combined_score_product = comp_int * comp_motion * comp_free * comp_cone
+            # combined_score_product = combined_score_product / np.max(combined_score_product) if np.max(combined_score_product) > 0 else combined_score_product
+
+        ###############
 
         # Optional: map combined_score to 0..255 for diagnostics
         combined_255 = np.clip((combined_score * 255.0), 0, 255).astype(np.uint8)
